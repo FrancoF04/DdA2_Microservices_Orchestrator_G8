@@ -60,6 +60,10 @@ def db_configurada() -> bool:
     return _engine is not None
 
 
+def obtener_sessionmaker() -> Optional[async_sessionmaker[AsyncSession]]:
+    return _sessionmaker
+
+
 async def _select_1(engine: AsyncEngine) -> None:
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))

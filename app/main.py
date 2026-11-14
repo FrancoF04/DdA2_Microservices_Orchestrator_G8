@@ -10,7 +10,8 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health
+from app.api import health, proxy, servicios
+from app.auditoria import RegistroAuditoria
 from app.config import Settings, get_settings
 from app.db.session import cerrar_db, iniciar_db
 from app.errores import registrar_manejadores
@@ -18,25 +19,30 @@ from app.kafka.cliente import ClienteKafka
 from app.logging_config import configurar_logging
 from app.middleware.correlation_id import HEADER as CORRELATION_HEADER
 from app.middleware.correlation_id import CorrelationIdMiddleware
+from app.proxy.clientes_http import ClientesHttp
 
 
-def crear_app(settings: Optional[Settings] = None) -> FastAPI:
+def crear_app(
+    settings: Optional[Settings] = None,
+    transporte_http: Optional[httpx.AsyncBaseTransport] = None,
+) -> FastAPI:
+    """`transporte_http` permite a los tests simular los servicios destino."""
     settings = settings or get_settings()
     configurar_logging(settings.log_level)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         iniciar_db(settings)
-        # Cliente HTTP compartido para el proxy (fase 1a).
-        app.state.http = httpx.AsyncClient(
-            timeout=settings.proxy_timeout_segundos, follow_redirects=False
-        )
+        # Un cliente HTTP por servicio destino (aislamiento y autoreparación).
+        app.state.http = ClientesHttp(transporte_http)
+        await app.state.auditoria.iniciar()
         await app.state.kafka.iniciar()
         try:
             yield
         finally:
             await app.state.kafka.detener()
-            await app.state.http.aclose()
+            await app.state.auditoria.detener()
+            await app.state.http.cerrar()
             await cerrar_db()
 
     app = FastAPI(
@@ -47,6 +53,7 @@ def crear_app(settings: Optional[Settings] = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.kafka = ClienteKafka(settings)
+    app.state.auditoria = RegistroAuditoria(settings)
 
     app.add_middleware(
         CORSMiddleware,
@@ -61,6 +68,9 @@ def crear_app(settings: Optional[Settings] = None) -> FastAPI:
 
     registrar_manejadores(app)
     app.include_router(health.router)
+    # Las rutas propias van antes que el proxy: /api/orquestador/** no se reenvía.
+    app.include_router(servicios.router)
+    app.include_router(proxy.router)
     return app
 
 
