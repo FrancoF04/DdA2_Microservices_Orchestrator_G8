@@ -498,7 +498,7 @@ AUDITORIA_RETENCION_DIAS=7
 | Fase | Objetivo | Cambios en otros repos |
 |---|---|---|
 | **0. Esqueleto** | FastAPI + `/health` + Dockerfile + compose + config + Alembic con las tablas | Ninguno |
-| **1a. Proxy** | `/api/{servicio}/**` con correlation id, auditoría en `llamada_servicio` y `/api/orquestador/servicios` | Solo URLs en `.env` (front, leads, calificacion, ia-resumen) |
+| **1a. Proxy** ✅ | `/api/{servicio}/**` con correlation id, auditoría en `llamada_servicio` y `/api/orquestador/servicios`. Despliegue en Render: [03-despliegue-render.md](03-despliegue-render.md) | Solo URLs en `.env` (front, leads, calificacion, ia-resumen) |
 | **1b. Observación de sagas** | Consumir K1–K5, máquina `REGISTRO_LEAD`, timeouts y `/api/orquestador/sagas` | Ninguno |
 | **2. Orquestación real** | El orquestador publica `resumen-solicitado` (outbox), reintentos manuales, inyección de `X-Api-Key`, `X-Origen-Servicio` | leads deja de publicar K3; leads agrega `/health`; monitor suma orquestador e ia-resumen; calificacion publica con sobre (recomendado) |
 | **3. Nuevos servicios** | clientes y auth (validación de JWT en el orquestador) al ruteo; saga `CONSULTA_MULTAS_VEHICULO` con el scraper y vehiculos | Los de esos repos; el front agrega login |
