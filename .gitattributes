@@ -1,0 +1,4 @@
+* text=auto
+# Scripts que corren dentro de contenedores Linux: siempre LF.
+*.sh text eol=lf
+Dockerfile text eol=lf
