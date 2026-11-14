@@ -55,9 +55,9 @@ class Settings(BaseSettings):
     kafka_ssl_cafile: Optional[str] = None
     kafka_reintento_conexion_segundos: float = 15.0
 
-    # --- sagas ---
-    saga_timeout_calificacion_segundos: int = 120
-    saga_timeout_resumen_segundos: int = 300
+    # --- flujos ---
+    flujo_timeout_calificacion_segundos: int = 120
+    flujo_timeout_resumen_segundos: int = 300
     auditoria_retencion_dias: int = 7
 
     @field_validator(

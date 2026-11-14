@@ -1,4 +1,4 @@
-"""Punto de entrada del orquestador (API Gateway + orquestador de sagas)."""
+"""Punto de entrada del orquestador (API Gateway + orquestador de flujos)."""
 
 from __future__ import annotations
 
