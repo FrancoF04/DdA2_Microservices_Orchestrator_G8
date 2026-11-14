@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- agregado para el orquestador ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
