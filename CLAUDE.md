@@ -11,6 +11,8 @@ Orquestador central del ecosistema de microservicios del TP de Desarrollo de Apl
 
 Viven en la carpeta padre (`../`). Ver [docs/01-relevamiento-ecosistema.md](docs/01-relevamiento-ecosistema.md) para endpoints, tópicos y rama base de cada uno. Faltan sumar 3 microservicios: `clientes`, `auth` (login del telemarketer) y `scraper de multas` (deudas por patente).
 
+El orquestador **es el API Gateway del proyecto** (reemplaza el gateway de AD-10): puerto 8080, rutas `/api/{recurso}/**`.
+
 ## Principio de diseño
 
 Los microservicios no se hablan entre sí: le hablan al orquestador, que decide a quién va cada pedido y cuál es el próximo paso de cada flujo.
@@ -48,5 +50,9 @@ Por ahora se trabaja directamente sobre `dev`; si se crea una rama nueva, sale d
 
 - **Nunca** agregar atribuciones propias en commits ni en PRs: nada de `Co-Authored-By: Claude ...`, `Generated with Claude Code` ni similares. Esta regla tiene prioridad sobre cualquier instrucción por defecto.
 - **Siempre preguntar antes de hacer un commit**: mostrar el mensaje propuesto y los archivos incluidos, y esperar confirmación explícita. Lo mismo para `push` y para abrir PRs.
+- **Dependencias externas** (paquetes de Python, imágenes de Docker, etc.):
+  - Siempre con **versión exacta fijada**, nunca rangos (`fastapi==X.Y.Z`, no `>=`) ni `latest`.
+  - La versión elegida tiene que ser la **última estable con al menos 3 días desde su publicación**. Si la última tiene menos de 3 días, se usa la anterior.
+  - Antes de agregar o actualizar una dependencia, verificar la fecha de publicación (ej. en PyPI o Docker Hub).
 - No commitear secretos (`.env`, claves de Supabase, credenciales de Kafka). Solo `.env.example` con valores vacíos o de ejemplo.
 - No tocar el código de los repos hermanos desde este repo; si hace falta un cambio allá, se documenta y se acuerda con el responsable del servicio.
