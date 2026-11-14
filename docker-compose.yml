@@ -51,6 +51,11 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # 3 particiones, igual que crean los servicios sus tópicos. Si un tópico se
+      # autocrea con 1 (porque alguien lo escucha antes de que exista) y después un
+      # servicio lo agranda, los consumidores ya conectados no ven las particiones
+      # nuevas hasta ~5 min después y los mensajes quedan sin leer.
+      KAFKA_NUM_PARTITIONS: 3
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     ports:
       - "9092:9092"
