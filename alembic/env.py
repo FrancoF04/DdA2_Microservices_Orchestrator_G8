@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from logging.config import fileConfig
 
 from sqlalchemy import pool, text
@@ -41,7 +42,14 @@ def run_migrations_offline() -> None:
 
 
 def _correr(connection: Connection) -> None:
-    connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
+    # Se consulta antes de crear: `CREATE SCHEMA IF NOT EXISTS` exige permiso de
+    # creación sobre la base aunque el schema ya exista, y un rol restringido
+    # (orquestador_app en Supabase, orquestador en local) no lo tiene.
+    existe = connection.execute(
+        text("SELECT 1 FROM pg_namespace WHERE nspname = :s"), {"s": SCHEMA}
+    ).scalar()
+    if not existe:
+        connection.execute(text(f'CREATE SCHEMA "{SCHEMA}"'))
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -63,4 +71,8 @@ async def run_migrations_online() -> None:
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    asyncio.run(run_migrations_online())
+    # En Windows el loop por defecto (Proactor) no sirve para psycopg async.
+    asyncio.run(
+        run_migrations_online(),
+        loop_factory=asyncio.SelectorEventLoop if sys.platform == "win32" else None,
+    )
