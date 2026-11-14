@@ -31,7 +31,12 @@ class Settings(BaseSettings):
     ia_resumen_url: str = "http://localhost:8001"
     auth_url: Optional[str] = None
     multas_url: Optional[str] = None
-    proxy_timeout_segundos: float = 5.0
+    # Tiempo máximo esperando la respuesta del servicio. En Render (plan free)
+    # un servicio dormido tarda hasta ~1 min en despertar: usar 60 allá.
+    proxy_timeout_segundos: float = 30.0
+    proxy_timeout_conexion_segundos: float = 10.0
+    # Reintentos ante error de conexión, solo en GET/HEAD/OPTIONS (sin body).
+    proxy_reintentos_get: int = 1
 
     # --- base de datos (Supabase, session pooler 5432) ---
     database_url: Optional[str] = None

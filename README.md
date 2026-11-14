@@ -58,7 +58,13 @@ pytest
 | Método | Ruta | Descripción |
 |---|---|---|
 | GET | `/health` | Estado del orquestador, la base y Kafka (`UP` / `DEGRADADO`) |
+| * | `/api/{recurso}/**` | Proxy hacia el servicio dueño del recurso: `leads`, `clientes`, `vehiculos`, `calificaciones`, `monitor`, `resumen`, `resumen-ia`, `auth`, `multas` |
+| GET | `/api/orquestador/servicios?ventana_minutos=60` | Por servicio: llamadas, % de error, latencia p50/p95 y último error |
 | GET | `/docs` | Swagger UI |
+
+Ejemplo: `GET /api/leads?estado=CALIFICADO` se reenvía a `{LEADS_URL}/leads?estado=CALIFICADO`.
+
+Para desplegar en Render y conectar los demás servicios, ver [docs/03-despliegue-render.md](docs/03-despliegue-render.md).
 
 ## Dependencias
 

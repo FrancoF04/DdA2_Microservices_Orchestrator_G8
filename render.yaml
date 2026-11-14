@@ -1,0 +1,61 @@
+# Blueprint de Render para el orquestador (API Gateway).
+# Las variables con `sync: false` se completan a mano en el dashboard de Render
+# (son secretos o dependen de las URLs de cada servicio). Ver docs/03-despliegue-render.md.
+services:
+  - type: web
+    name: orquestador
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      # --- app ---
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"            # el proxy de Render no tiene IP fija
+      - key: LOG_LEVEL
+        value: INFO
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false           # URL del front en Render (y localhost:5173 si se quiere probar local)
+
+      # --- servicios destino (URL pública de cada uno en Render, sin /recurso) ---
+      - key: LEADS_URL
+        sync: false
+      - key: CLIENTES_URL
+        sync: false
+      - key: VEHICULOS_URL
+        value: https://vehiculosmicroservice.onrender.com
+      - key: CALIFICACION_URL
+        sync: false
+      - key: MONITOR_URL
+        sync: false
+      - key: IA_RESUMEN_URL
+        sync: false
+      - key: AUTH_URL
+        sync: false
+      - key: MULTAS_URL
+        sync: false
+      # Un servicio dormido en el plan free tarda hasta ~1 min en despertar.
+      - key: PROXY_TIMEOUT_SEGUNDOS
+        value: "60"
+
+      # --- base de datos (Supabase, session pooler 5432) ---
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_SCHEMA
+        value: orquestador
+
+      # --- kafka (Aiven) ---
+      - key: KAFKA_ENABLED
+        value: "true"
+      - key: KAFKA_BOOTSTRAP_SERVERS
+        sync: false
+      - key: KAFKA_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - key: KAFKA_SASL_MECHANISM
+        sync: false           # PLAIN o SCRAM-SHA-256: a confirmar con quien administra Aiven
+      - key: KAFKA_SASL_USERNAME
+        sync: false
+      - key: KAFKA_SASL_PASSWORD
+        sync: false
+      - key: KAFKA_SSL_CAFILE
+        value: ca.pem
