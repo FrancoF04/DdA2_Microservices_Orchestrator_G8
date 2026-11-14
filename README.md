@@ -9,24 +9,28 @@ La documentación de diseño está en [docs/](docs/README.md).
 - Python 3.13
 - Docker Desktop (para el compose local)
 
-## Correr con Docker (recomendado)
+## Entorno local
+
+Este repo trae la **infraestructura local de todo el ecosistema**: Postgres (un schema por servicio), Kafka, kafka-ui y un simulador de `clientes`. Los servicios se corren nativos desde su propio repo. La guía completa, con el `.env` de cada repo, está en [docs/04-desarrollo-local.md](docs/04-desarrollo-local.md).
 
 ```bash
-cp .env.example .env
-docker compose up --build
+docker compose up -d          # infraestructura
 ```
 
-Levanta tres contenedores con infraestructura local, sin depender de Supabase ni de Aiven:
-
-- `orquestador` en <http://localhost:8080>
-- PostgreSQL en el puerto `5433`
-- Kafka (KRaft) en `localhost:9092`
-
-Las migraciones se aplican solas al arrancar. Para inspeccionar los tópicos, agregá kafka-ui en <http://localhost:8090>:
+Para correr el orquestador:
 
 ```bash
-docker compose --profile herramientas up
+py -3.13 -m venv .venv
+.venv\Scripts\activate          # Linux/macOS: source .venv/bin/activate
+pip install -r requirements-dev.txt -c constraints.txt
+cp .env.example .env            # y completar (ver docs/04)
+alembic upgrade head
+python -m app --reload          # en Windows usar esto y no `uvicorn` directo
 ```
+
+Otra opción es levantar el orquestador en contenedor, con `docker compose --profile orquestador up -d`.
+
+Sin `DATABASE_URL` y con `KAFKA_ENABLED=false`, la app levanta igual: `/health` informa esas dependencias como `DESHABILITADO`.
 
 Para correr contra Supabase y Aiven, completá `.env` y levantá solo la imagen:
 
@@ -34,18 +38,6 @@ Para correr contra Supabase y Aiven, completá `.env` y levantá solo la imagen:
 docker build -t orquestador:local .
 docker run --env-file .env -p 8080:8080 orquestador:local
 ```
-
-## Correr sin Docker
-
-```bash
-py -3.13 -m venv .venv
-.venv\Scripts\activate          # Linux/macOS: source .venv/bin/activate
-pip install -r requirements-dev.txt -c constraints.txt
-alembic upgrade head            # requiere DATABASE_URL
-uvicorn app.main:app --reload --port 8080
-```
-
-Sin `DATABASE_URL` y con `KAFKA_ENABLED=false`, la app levanta igual: `/health` informa esas dependencias como `DESHABILITADO`.
 
 ## Tests
 

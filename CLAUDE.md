@@ -54,5 +54,6 @@ Por ahora se trabaja directamente sobre `dev`; si se crea una rama nueva, sale d
   - Siempre con **versión exacta fijada**, nunca rangos (`fastapi==X.Y.Z`, no `>=`) ni `latest`.
   - La versión elegida tiene que ser la **última estable con al menos 3 días desde su publicación**. Si la última tiene menos de 3 días, se usa la anterior.
   - Antes de agregar o actualizar una dependencia, verificar la fecha de publicación (ej. en PyPI o Docker Hub).
+- **Nunca** ejecutar Node ni gestores de paquetes de JS (`node`, `npm`, `npx`, `pnpm`, `yarn`, `bun`) sin autorización explícita del usuario. Avisar antes qué comando y para qué.
 - No commitear secretos (`.env`, claves de Supabase, credenciales de Kafka). Solo `.env.example` con valores vacíos o de ejemplo.
 - No tocar el código de los repos hermanos desde este repo; si hace falta un cambio allá, se documenta y se acuerda con el responsable del servicio.
