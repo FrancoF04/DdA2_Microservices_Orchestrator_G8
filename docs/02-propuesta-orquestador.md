@@ -506,7 +506,7 @@ AUDITORIA_RETENCION_DIAS=7
 
 ## 9. Decisiones abiertas para el equipo
 
-1. **¿El orquestador reemplaza al API Gateway del documento (AD-10)?** La propuesta asume que sí, con puerto 8080 y prefijo `/api`. Si se confirma, conviene registrarlo como AD-16 en el documento de arquitectura.
+1. ~~¿El orquestador reemplaza al API Gateway del documento (AD-10)?~~ **Resuelto (2026-11-14): sí.** El orquestador es el API Gateway del proyecto: puerto 8080, prefijo `/api`. Falta registrarlo como AD-16 en el documento de arquitectura.
 2. **Fase 2 de `resumen-solicitado`:** ¿se acepta que leads deje de publicarlo? Es el único cambio de código obligatorio en otro repo para que haya orquestación real.
 3. **Autenticación servicio → orquestador:** ¿pass-through de `X-Api-Key` (más simple) o claves por servicio con inyección en el orquestador (más seguro, centraliza secretos)?
 4. **Correcciones manuales:** ¿una corrección debe volver a generar el resumen de la IA?
