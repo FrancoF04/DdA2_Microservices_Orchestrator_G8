@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -10,10 +12,11 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, proxy, servicios
+from app.api import flujos, health, proxy, servicios
 from app.auditoria import RegistroAuditoria
 from app.config import Settings, get_settings
-from app.db.session import cerrar_db, iniciar_db
+from app.db.session import cerrar_db, db_configurada, iniciar_db
+from app.flujos import servicio as servicio_flujos
 from app.errores import registrar_manejadores
 from app.kafka.cliente import ClienteKafka
 from app.logging_config import configurar_logging
@@ -36,10 +39,19 @@ def crear_app(
         # Un cliente HTTP por servicio destino (aislamiento y autoreparación).
         app.state.http = ClientesHttp(transporte_http)
         await app.state.auditoria.iniciar()
+        tarea_vencimientos = None
+        if db_configurada():
+            # Seguimiento de flujos (fase 1b): sin base no hay dónde guardarlos.
+            servicio_flujos.registrar_manejadores(settings)
+            tarea_vencimientos = asyncio.create_task(servicio_flujos.vencer_periodicamente(settings))
         await app.state.kafka.iniciar()
         try:
             yield
         finally:
+            if tarea_vencimientos is not None:
+                tarea_vencimientos.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await tarea_vencimientos
             await app.state.kafka.detener()
             await app.state.auditoria.detener()
             await app.state.http.cerrar()
@@ -70,6 +82,7 @@ def crear_app(
     app.include_router(health.router)
     # Las rutas propias van antes que el proxy: /api/orquestador/** no se reenvía.
     app.include_router(servicios.router)
+    app.include_router(flujos.router)
     app.include_router(proxy.router)
     return app
 

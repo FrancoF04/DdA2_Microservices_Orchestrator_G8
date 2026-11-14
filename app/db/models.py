@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, MetaData, Text, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, MetaData, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -36,6 +36,7 @@ class Flujo(Base):
     """
 
     __tablename__ = "flujo"
+    __table_args__ = (UniqueConstraint("tipo", "clave_negocio", name="uq_flujo_tipo_clave_negocio"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tipo: Mapped[str] = mapped_column(Text, nullable=False)
