@@ -28,7 +28,11 @@ Schemas creados: `leads`, `calificacion`, `vehiculos`, `clientes`, `monitor`, `o
 
 ## 2. Levantar cada servicio
 
-Valores para el `.env` local de cada repo (o variables de entorno). Las URLs entre servicios apuntan al **orquestador** (`http://127.0.0.1:8080/api`), para que todo el tráfico pase por él.
+Estas son las variables de cada servicio. Las URLs entre servicios apuntan al **orquestador** (`http://127.0.0.1:8080/api`), para que todo el tráfico pase por él.
+
+- **Servicios Python (orquestador, leads, ia-resumen):** van en un `.env` en la raíz del repo, que se lee solo al arrancar.
+- **Servicios Java (calificacion, vehiculos, monitor):** Spring Boot **no lee** archivos `.env`. Hay que cargarlas como variables de entorno en la terminal antes del `./mvnw`, o en la configuración de ejecución del IDE (en IntelliJ: *Run/Debug Configurations → Environment variables*). Vehiculos trae scripts para eso (`scripts/cargar-env.ps1` y `scripts/cargar-env.sh`), que leen `infra/.env`.
+- **Los tres repos Java traen el Maven Wrapper:** alcanza con JDK 21 o superior, no hace falta instalar Maven.
 
 > **En Windows usar `127.0.0.1` y no `localhost`** en las URLs entre servicios: `localhost` prueba primero IPv6 y, si el servicio no escucha ahí, tarda unos 2 s extra en cada conexión.
 
@@ -105,7 +109,7 @@ OLLAMA_API_KEY=<pedir al responsable>
 uvicorn app.main:app --port 8001 --reload
 ```
 
-### CalificacionMicroservice (requiere Maven)
+### CalificacionMicroservice
 
 ```dotenv
 SPRING_DATASOURCE_URL=jdbc:postgresql://127.0.0.1:5432/postgres
@@ -118,10 +122,10 @@ CLIENTES_CLAVE_CALIFICACION=clave-local-calificacion
 ```
 
 ```bash
-mvn spring-boot:run
+./mvnw spring-boot:run          # PowerShell: .\mvnw.cmd spring-boot:run
 ```
 
-### VehiculosMicroservice (requiere Maven)
+### VehiculosMicroservice
 
 Contra el Postgres local **sí** se puede usar el perfil `seed` (datos de prueba). La prohibición del README de ese repo es solo para la base compartida de Supabase.
 
@@ -136,12 +140,12 @@ VEHICULOS_CLAVE_ESCRITURA=clave-local-vehiculos-de-32-caracteres-o-mas
 ```
 
 ```bash
-mvn -pl vehiculos-service spring-boot:run
+./mvnw -pl vehiculos-service spring-boot:run      # PowerShell: .\mvnw.cmd ...
 ```
 
-El seed incluye el Toyota Corolla `a0000000-0000-4000-8000-000000000001`, útil como `vehiculoId` de prueba.
+El seed carga 8 unidades. Por ejemplo, el Toyota Corolla `a0000000-0000-4000-8000-000000000001`, de $24.500.000, sirve como `vehiculoId` de prueba.
 
-### MonitorMicroservice (requiere Maven)
+### MonitorMicroservice
 
 El monitor sondea a cada servicio **directo**, no por el orquestador.
 
@@ -154,6 +158,10 @@ VEHICULOS_SERVICE_URL=http://127.0.0.1:8083
 CLIENTES_SERVICE_URL=http://127.0.0.1:8082
 LEADS_SERVICE_URL=http://127.0.0.1:8000
 CALIFICACION_SERVICE_URL=http://127.0.0.1:8084
+```
+
+```bash
+./mvnw spring-boot:run
 ```
 
 Sin estas variables usa H2 en memoria y también funciona.

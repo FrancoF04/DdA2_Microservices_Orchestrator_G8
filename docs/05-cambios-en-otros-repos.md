@@ -51,6 +51,12 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 
 **Estado:** pendiente. Es la fase de orquestación completa, después de la 1b.
 
+## Hechos
+
+| Fecha | Repos | Cambio |
+|---|---|---|
+| 2026-11-14 | CalificacionMicroservice (#6), VehiculosMicroservice (#19), MonitorMicroservice | Maven Wrapper con Maven 3.9.16: ya no hace falta instalar Maven para correrlos. |
+
 ## Por repo
 
 ### LeadsMicroservice
@@ -71,6 +77,8 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 | 🟡 | Publicar `lead-calificado` **con el sobre común** (hoy va como JSON plano). | Hoy se pierde el `correlationId` en ese paso: no se puede seguir un flujo de punta a punta con un solo ID. Verificado en local. |
 | 🟡 | `motivos` como objetos `{regla, puntos, descripcion}` en vez de texto formateado. | Es lo que dice el contrato y lo que necesita el historial de clientes. |
 | 🟡 | Mandar `X-Origen-Servicio: calificacion` en las llamadas a vehiculos y clientes. | Trazabilidad. |
+| 🟡 | Reenviar el `correlationId` del evento recibido como header `X-Correlation-Id` en las llamadas REST a vehiculos y clientes. | Verificado en local: hoy cada llamada sale sin ese header, el orquestador genera un ID nuevo y se pierde el hilo del lead. |
+| ⚪ | Fijar las imágenes del `Dockerfile` con versión exacta y digest. | Builds reproducibles en Render y cumplir la regla de 3 días. Solo afecta al deploy, no al desarrollo local. |
 
 ### IAllmFormulario (ia-resumen)
 
@@ -80,6 +88,7 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 | 🔴 Orquestación completa | Consumir el comando `GenerarResumen` de `crm.comandos` y publicar `ResumenGenerado` en `crm.eventos`. | Ídem. |
 | 🟡 | Si no consigue el cliente o el vehículo, generar el resumen igual con lo que tenga (o publicar un error). | Verificado en local: si vehiculos no responde, el consumer revienta con un error de validación y el resumen no se genera nunca, sin avisar a nadie. |
 | 🟡 | Mandar `X-Origen-Servicio: ia-resumen` en las llamadas. | Trazabilidad. |
+| 🟡 | Reenviar el `correlationId` del evento `resumen-solicitado` como header `X-Correlation-Id` en las llamadas a clientes y vehiculos. | Ídem calificacion: hoy se pierde el hilo del lead. |
 | ⚪ | Mover `pytest` a un `requirements-dev.txt`. | Hoy se instala en producción. |
 
 ### VehiculosMicroservice
@@ -88,6 +97,7 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 |---|---|---|
 | 🔴 Flujo de multas | Agregar el campo `patente` (migración de Flyway, la hace el responsable). | El scraper de multas consulta por patente. |
 | 🔴 Flujo de multas | Recibir el resultado del scraper: `PUT /vehiculos/{id}/multas` o comando por `crm.comandos`, a definir. | Que vehiculos decida qué hacer con las multas. |
+| ⚪ | Fijar las imágenes del `Dockerfile` con versión exacta y digest. | Ídem calificacion. |
 
 ### MonitorMicroservice
 
