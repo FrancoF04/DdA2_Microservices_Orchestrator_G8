@@ -52,6 +52,8 @@ pytest
 | GET | `/health` | Estado del orquestador, la base y Kafka (`UP` / `DEGRADADO`) |
 | * | `/api/{recurso}/**` | Proxy hacia el servicio dueño del recurso: `leads`, `clientes`, `vehiculos`, `calificaciones`, `monitor`, `resumen`, `resumen-ia`, `auth`, `multas` |
 | GET | `/api/orquestador/servicios?ventana_minutos=60` | Por servicio: llamadas, % de error, latencia p50/p95 y último error |
+| GET | `/api/orquestador/flujos?leadId=&estado=&tipo=` | Flujos y sus pasos. Ej.: `?estado=EXPIRADO` para ver los trabados |
+| GET | `/api/orquestador/flujos/{id}` | Un flujo con todos sus pasos y latencias |
 | GET | `/docs` | Swagger UI |
 
 Ejemplo: `GET /api/leads?estado=CALIFICADO` se reenvía a `{LEADS_URL}/leads?estado=CALIFICADO`.

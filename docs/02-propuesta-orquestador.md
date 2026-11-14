@@ -370,32 +370,38 @@ outbox                    (fase 2: publicación confiable de comandos)
 
 ### 6.4 Máquina de estados: flujo `REGISTRO_LEAD`
 
+**Implementado en la fase 1b** (`app/flujos/registro_lead.py`):
+
 ```
-           POST /api/leads (202 con lead_id)
+           K1 preformulario-completado (leads)
                        │
                        ▼
-               LEAD_REGISTRADO ──────────────┐
-                       │ K1 preformulario-   │ vence_en sin K1
-                       │    completado       ▼
-                       ▼                  EXPIRADO
             CALIFICACION_PENDIENTE ──── K5 DLT ──► FALLIDO
-                       │ K2 lead-calificado       ▲
-                       ▼                          │
-                   CALIFICADO                     │
-                       │ K3 resumen-solicitado    │
-                       │ (F1: lo ve; F2: lo       │
-                       │  publica el orquestador) │
-                       ▼                          │
-               RESUMEN_PENDIENTE ── error/timeout ┘
-                       │ K4 resumen-generado
+                       │ K2 lead-calificado
+                       ▼
+                   CALIFICADO
+                       │ K3 resumen-solicitado (leads)
+                       ▼
+               RESUMEN_PENDIENTE
+                       │ K4 resumen-generado (ia-resumen)
                        ▼
                    COMPLETADO
+
+   Desde CALIFICACION_PENDIENTE, CALIFICADO o RESUMEN_PENDIENTE, si se vence
+   el plazo → EXPIRADO. Si después llega el evento que faltaba, el flujo sigue.
 ```
 
-- `POST /api/leads` con respuesta distinta de 202 → el flujo se crea directamente en `FALLIDO`, con el paso `REGISTRAR_LEAD` y el código/servicio que falló (incluye la falla de clientes que leads propaga como 422/502/503).
-- Cada transición abre o cierra un `flujo_paso` y registra la latencia **entre** pasos: cuánto tardó calificacion en calificar o la IA en resumir.
-- Timeouts por paso configurables (ej. calificación 2 min, resumen 5 min). Un job periódico marca `EXPIRADO` lo que venció.
-- Llegadas fuera de orden (ej. K2 antes de que el orquestador procese el 202) se toleran: el flujo se crea con el primer mensaje que llegue para ese `leadId`.
+- **El flujo nace con `preformulario-completado`, no con el 202 del proxy.** El proxy reenvía la respuesta en streaming sin leerla, así que no conoce el `leadId`. Además, el evento ya trae el `correlationId` original del front. Los `POST /api/leads` que fallan antes de crear el lead se ven en `/api/orquestador/servicios`.
+- **Pasos con latencia:**
+  - `CALIFICAR_LEAD` mide de K1 a K2: cuánto tardó calificacion.
+  - `GENERAR_RESUMEN` mide de K3 a K4: cuánto tardó la IA.
+  - Se usa el timestamp de cada mensaje en Kafka, así todos se miden con el mismo reloj.
+- **Vencimientos:** cada `FLUJO_INTERVALO_VENCIMIENTO_SEGUNDOS`, una tarea marca `EXPIRADO` lo que venció. El paso pendiente queda en `TIMEOUT` y el flujo guarda en `ultimo_error` qué servicio no respondió. Los plazos son `FLUJO_TIMEOUT_CALIFICACION_SEGUNDOS` y `FLUJO_TIMEOUT_RESUMEN_SEGUNDOS`. Para `CALIFICADO` se usa el plazo del resumen, que es lo que espera de leads.
+- **Robustez:**
+  - Los duplicados se descartan con `evento_procesado`.
+  - Los eventos desordenados nunca hacen retroceder el estado.
+  - Dos eventos simultáneos del mismo lead no duplican el flujo, gracias a la restricción única `(tipo, clave_negocio)` y al bloqueo `FOR UPDATE`.
+  - Una corrección manual (`lead-calificado` con `origen=MANUAL`) se registra como paso `CORRECCION_CALIFICACION` sin cambiar el estado.
 
 ### 6.5 Recuperación
 
@@ -518,7 +524,7 @@ AUDITORIA_RETENCION_DIAS=7
 |---|---|---|
 | **0. Esqueleto** | FastAPI + `/health` + Dockerfile + compose + config + Alembic con las tablas | Ninguno |
 | **1a. Proxy** ✅ | `/api/{servicio}/**` con correlation id, auditoría en `llamada_servicio` y `/api/orquestador/servicios`. Despliegue en Render: [03-despliegue-render.md](03-despliegue-render.md) | Solo URLs en `.env` (front, leads, calificacion, ia-resumen) |
-| **1b. Seguimiento de flujos** | Consumir K1–K5, máquina `REGISTRO_LEAD`, timeouts y `/api/orquestador/flujos` | Ninguno |
+| **1b. Seguimiento de flujos** ✅ | Consumir K1–K5, máquina `REGISTRO_LEAD`, timeouts y `/api/orquestador/flujos` | Ninguno |
 | **2. Orquestación real** | El orquestador publica `resumen-solicitado` (outbox), reintentos manuales, inyección de `X-Api-Key`, `X-Origen-Servicio` | leads deja de publicar K3; leads agrega `/health`; monitor suma orquestador e ia-resumen; calificacion publica con sobre (recomendado) |
 | **3. Nuevos servicios** | clientes y auth (validación de JWT en el orquestador) al ruteo; flujo `CONSULTA_MULTAS_VEHICULO` con el scraper y vehiculos | Los de esos repos; el front agrega login |
 | **4. Orquestación completa** | Tópicos de comandos y eventos por servicio; ningún servicio escucha a otro | Todos: cambiar qué tópico escucha y en cuál publica cada uno |
