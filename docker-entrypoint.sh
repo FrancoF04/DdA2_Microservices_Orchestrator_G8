@@ -8,4 +8,10 @@ if [ "${MIGRAR_AL_INICIAR:-true}" = "true" ] && [ -n "${DATABASE_URL:-}" ]; then
     alembic upgrade head
 fi
 
-exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8080}" --proxy-headers
+# FORWARDED_ALLOW_IPS: de qué proxies se aceptan los headers X-Forwarded-*.
+# En Render va "*" (el proxy de Render no tiene IP fija); en local, solo localhost.
+exec uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port "${PORT:-8080}" \
+    --proxy-headers \
+    --forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-127.0.0.1}"
