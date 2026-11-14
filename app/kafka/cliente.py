@@ -164,7 +164,7 @@ class ClienteKafka:
             except json.JSONDecodeError as exc:
                 logger.error("JSON inválido en %s@%s: %s", record.topic, record.offset, exc)
             except Exception as exc:  # noqa: BLE001
-                # Fase 1b: enviar a orquestador-dlt y marcar la saga.
+                # Fase 1b: marcar la saga con el error (sin tópico DLT propio por el límite de Aiven).
                 logger.exception("Error procesando %s@%s: %s", record.topic, record.offset, exc)
             await self.consumer.commit()
 

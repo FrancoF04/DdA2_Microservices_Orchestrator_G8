@@ -247,7 +247,7 @@ SOLICITADA ──► CONSULTANDO_MULTAS ──► (multas.eventos) ──► ACT
 | `resumen-solicitado` | Consume (F1) → **Produce** (F2) | F1/F2 | Saga → `RESUMEN_PENDIENTE` |
 | `resumen-generado` | Consume | F1 | Saga → `COMPLETADA` |
 | `preformulario-completado-dlt` | Consume | F1 | Saga → `FALLIDA` |
-| `orquestador-dlt` | Produce | F1 | Mensajes que el propio orquestador no pudo procesar |
+| ~~`orquestador-dlt`~~ | — | — | **Descartado:** el plan free de Aiven permite 5 tópicos y ya están en uso. Ver §5.2. |
 
 - **Grupo consumidor:** `orquestador`, propio, para no robarle mensajes a los demás grupos. Cada grupo recibe su copia completa.
 - **Clave:** `leadId` al publicar, igual que el resto (orden por lead).
@@ -256,7 +256,19 @@ SOLICITADA ──► CONSULTANDO_MULTAS ──► (multas.eventos) ──► ACT
 - **Formatos:** aceptar mensajes con y sin sobre (`payload` o raíz), como ya hacen leads y calificacion.
 - **Config:** misma que leads (`SASL_SSL` + `ssl_context` desde `ca.pem`, `KAFKA_ENABLED`, creación de tópicos al arrancar). Si Kafka no está, la API HTTP levanta igual (como ia-resumen) y el estado lo informa `/health`.
 
-### 5.2 Contrato de eventos que publica el orquestador
+### 5.2 Límite de tópicos de Aiven: esquema de 3 tópicos
+
+**Decisión (2026-11-14):** el plan free de Aiven permite **5 tópicos** y ya están todos en uso. El diseño de "un tópico de comandos y otro de eventos por servicio" (§2) no entra: serían unos 16. Se reemplaza por **3 tópicos separados por tipo de mensaje**:
+
+| Tópico | Publica | Escucha | Contenido |
+|---|---|---|---|
+| `crm.comandos` | Solo el orquestador | Todos los servicios (cada uno con su grupo) | Órdenes. El sobre lleva `destino`; cada servicio ignora lo que no es suyo. |
+| `crm.eventos` | Todos los servicios | Solo el orquestador | Hechos (`PreformularioCompletado`, `LeadCalificado`, `ResumenGenerado`...). |
+| `crm.dlt` | Cualquiera | Monitoreo / orquestador | Mensajes que fallaron, de cualquier servicio. |
+
+La clave sigue siendo el `leadId`, así que se mantiene el orden por lead. El costo es que cada servicio lee órdenes ajenas y las descarta, algo insignificante con ~150 leads por día. Se prototipa en local (Kafka del compose, sin límite) y se aplica en Aiven en un cambio coordinado, porque los 5 tópicos viejos y los 3 nuevos no pueden convivir. Los cambios por repo están en [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md).
+
+### 5.3 Contrato de eventos que publica el orquestador
 
 Sobre común del documento v1.1, **completo** (con `version` y `occurredAt`), más `timestamp` por compatibilidad con los consumidores Python actuales:
 
@@ -512,7 +524,7 @@ AUDITORIA_RETENCION_DIAS=7
 4. **Correcciones manuales:** ¿una corrección debe volver a generar el resumen de la IA?
 5. **Sobre de eventos:** ¿se normaliza en todos los servicios al formato del documento (`version`, `occurredAt`) o el orquestador se queda tolerando las variantes?
 6. **Base:** confirmar con el responsable de Supabase (Naim) la creación del schema `orquestador` y del rol `orquestador_app`, y el presupuesto de conexiones del pooler.
-7. **Kafka:** confirmar el mecanismo SASL de Aiven (`PLAIN` o `SCRAM-SHA-256`, I12) y que el orquestador puede crear tópicos (`orquestador-dlt`).
+7. **Kafka:** confirmar el mecanismo SASL de Aiven (`PLAIN` o `SCRAM-SHA-256`, I12) y cómo se hace el pase a los 3 tópicos (§5.2).
 8. **Scraper de multas** (resuelto: stock):
    - ¿Con qué frecuencia se re-consultan las unidades?
    - ¿vehiculos expone `PUT /vehiculos/{id}/multas` o escucha un comando por Kafka?

@@ -11,11 +11,11 @@ from typing import Any
 
 from app.config import Settings
 
-TOPICO_DLT_ORQUESTADOR = "orquestador-dlt"
-
 # Tópicos que el orquestador crea si no existen (Aiven no los autocrea).
-# Solo los propios: los tópicos de los demás servicios los crean sus dueños.
-TOPICOS_PROPIOS = [TOPICO_DLT_ORQUESTADOR]
+# Vacío a propósito: el plan free de Aiven permite solo 5 tópicos y ya están
+# todos en uso. Cuando se pase al esquema de 3 tópicos (crm.comandos,
+# crm.eventos, crm.dlt), van acá. Ver docs/05-cambios-en-otros-repos.md.
+TOPICOS_PROPIOS: list[str] = []
 
 
 def argumentos_seguridad(settings: Settings) -> dict[str, Any]:
