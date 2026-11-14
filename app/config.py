@@ -54,10 +54,19 @@ class Settings(BaseSettings):
     kafka_sasl_password: Optional[str] = None
     kafka_ssl_cafile: Optional[str] = None
     kafka_reintento_conexion_segundos: float = 15.0
+    # Tópicos que escucha el orquestador para seguir el flujo del lead (los publican otros servicios).
+    kafka_topico_preformulario_completado: str = "preformulario-completado"
+    kafka_topico_lead_calificado: str = "lead-calificado"
+    kafka_topico_resumen_solicitado: str = "resumen-solicitado"
+    kafka_topico_resumen_generado: str = "resumen-generado"
+    kafka_topico_preformulario_dlt: str = "preformulario-completado-dlt"
 
-    # --- sagas ---
-    saga_timeout_calificacion_segundos: int = 120
-    saga_timeout_resumen_segundos: int = 300
+    # --- flujos ---
+    # Tiempo máximo de cada paso antes de marcar el flujo como EXPIRADO.
+    flujo_timeout_calificacion_segundos: int = 120
+    flujo_timeout_resumen_segundos: int = 300
+    # Cada cuánto se buscan flujos vencidos.
+    flujo_intervalo_vencimiento_segundos: float = 15.0
     auditoria_retencion_dias: int = 7
 
     @field_validator(

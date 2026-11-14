@@ -31,7 +31,7 @@ Tipos: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`
 Ejemplos:
 
 ```
-feat(saga): agrega máquina de estados del registro de lead
+feat(flujos): agrega máquina de estados del registro de lead
 fix(kafka): corrige el ssl_context para Aiven
 docs: documenta los endpoints proxeados por servicio
 ```

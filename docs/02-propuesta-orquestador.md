@@ -7,7 +7,7 @@ Basada en el relevamiento de [01-relevamiento-ecosistema.md](01-relevamiento-eco
 El orquestador cumple dos roles en un mismo servicio:
 
 1. **Puerta de entrada única (rol de API Gateway).** Todo el tráfico HTTP, tanto el del front hacia los servicios (norte-sur) como el de un servicio hacia otro (este-oeste), entra por `/api/...` y el orquestador lo reenvía al servicio dueño. Así cada llamada queda registrada con su origen, destino, código y latencia. Ocupa el lugar del gateway que el documento de arquitectura prevé (AD-10, puerto 8080) y que nunca se desplegó.
-2. **Orquestador de sagas.** Sigue cada flujo de negocio de varios pasos (empezando por el registro de un lead) como una máquina de estados persistida, para saber en qué paso está, cuánto tardó cada servicio y desde dónde reanudar si algo se cae.
+2. **Orquestador de flujos** (en la teoría, patrón *Saga*). Sigue cada flujo de negocio de varios pasos (empezando por el registro de un lead) como una máquina de estados persistida, para saber en qué paso está, cuánto tardó cada servicio y desde dónde reanudar si algo se cae.
 
 **No es:**
 
@@ -52,7 +52,7 @@ Los nombres de los tópicos son una propuesta. Pasar a este esquema exige cambia
 
 Si el orquestador es la puerta HTTP de todo, cuando se cae se corta todo el tráfico síncrono. Para un TP es aceptable, y es el mismo riesgo que tenía el gateway del documento. Se mitiga así:
 
-- El proxy HTTP es **sin estado**: el estado de las sagas vive en la base, así que se pueden levantar varias réplicas.
+- El proxy HTTP es **sin estado**: el estado de los flujos vive en la base, así que se pueden levantar varias réplicas.
 - Los pasos asincrónicos siguen en Kafka: si el orquestador se cae a mitad de un flujo, los eventos esperan en el tópico y el consumidor retoma desde su offset.
 - El monitor sondea a los servicios **directo, sin pasar por el orquestador** (ver §4.6), para poder distinguir "se cayó el orquestador" de "se cayó leads".
 
@@ -108,7 +108,7 @@ Leyenda: **F1** = fase 1, solo configuración. **F2** = fase 2, cambio chico en 
 | R4 clientes* | directo a :8082 | `/api/clientes/**` | F1 | `VITE_CLIENTES_API_URL=<orq>/api` |
 | R5 monitor | directo a :8085 | `/api/monitor/**` | F1 | `VITE_MONITOR_API_URL=<orq>/api` |
 | Sondeo directo de respaldo (`monitorClient.js`) | a cada servicio | **No** pasa por el orquestador; o se reemplaza por `GET /api/orquestador/servicios` | F2 | Decidir con el equipo del front |
-| Estado del flujo de un lead | no existe | `GET /api/orquestador/sagas?leadId=` (opcional, para mostrar "calificando…", "generando resumen…") | F2 | Nuevo uso opcional |
+| Estado del flujo de un lead | no existe | `GET /api/orquestador/flujos?leadId=` (opcional, para mostrar "calificando…", "generando resumen…") | F2 | Nuevo uso opcional |
 
 Mientras tanto, a futuro, todas las `VITE_*_API_URL` podrían colapsar en `VITE_API_URL` (que ya existe y apunta a `:8080/api`).
 
@@ -118,13 +118,13 @@ Mientras tanto, a futuro, todas las `VITE_*_API_URL` podrían colapsar en `VITE_
 |---|---|---|---|
 | Entrante: `POST/GET /leads`, `GET /leads/{id}`, `PATCH /leads/{id}/state` | Llegan vía `/api/leads/**` | F1 | Ninguno |
 | R6 `POST /clientes` | Vía `/api/clientes` | F1 | `CLIENTES_URL=<orq>/api` |
-| K1 publica `preformulario-completado` | Sigue publicando leads; el orquestador **escucha** y avanza la saga | F1 | Ninguno |
+| K1 publica `preformulario-completado` | Sigue publicando leads; el orquestador **escucha** y avanza el flujo | F1 | Ninguno |
 | K2 consume `lead-calificado` | Igual | — | Ninguno |
 | K3 publica `resumen-solicitado` | **Pasa al orquestador**: cuando ve `lead-calificado`, él publica `resumen-solicitado` con el mismo contrato | F2 | Quitar `publish_resumen_solicitado` del consumer (o ponerlo detrás de un flag) |
 | K4 consume `resumen-generado` | Igual | — | Ninguno |
 | Salud | El orquestador necesita un `/health` | F2 | Agregar `GET /health` (resuelve I8) |
 
-En la fase 2, para que el orquestador pueda armar `resumen-solicitado` sin consultar a leads, la saga guarda los datos comerciales del paso (`anticipo`, `permuta`, `ubicacion`, etc.) del `preformulario-completado`. Se guardan solo mientras la saga está activa (§6.3). La otra opción es que el orquestador haga `GET /leads/{id}` en ese momento, que es más simple y no duplica datos. **Recomendado: `GET /leads/{id}`.**
+En la fase 2, para que el orquestador pueda armar `resumen-solicitado` sin consultar a leads, el flujo guarda los datos comerciales del paso (`anticipo`, `permuta`, `ubicacion`, etc.) del `preformulario-completado`. Se guardan solo mientras el flujo está activo (§6.3). La otra opción es que el orquestador haga `GET /leads/{id}` en ese momento, que es más simple y no duplica datos. **Recomendado: `GET /leads/{id}`.**
 
 ### 4.3 calificacion — `CalificacionMicroservice`
 
@@ -134,10 +134,10 @@ En la fase 2, para que el orquestador pueda armar `resumen-solicitado` sin consu
 | R7 `GET /vehiculos/{id}` | Vía `/api/vehiculos` | F1 | `VEHICULOS_SERVICE_URL=<orq>/api` |
 | R8 `GET /clientes/{id}/situacion-crediticia` | Vía `/api/clientes` | F1 | `CLIENTES_SERVICE_URL=<orq>/api` |
 | K1 consume / K2 publica | Igual; el orquestador escucha K2 | F1 | Ninguno |
-| K5 DLT `preformulario-completado-dlt` | El orquestador **consume la DLT** y marca la saga `FALLIDA` en el paso de calificación | F1 | Ninguno |
+| K5 DLT `preformulario-completado-dlt` | El orquestador **consume la DLT** y marca el flujo como `FALLIDO` en el paso de calificación | F1 | Ninguno |
 | Sobre en `lead-calificado` (I1) | El orquestador correlaciona por `leadId` porque no hay `eventId`/`correlationId` | F1 | Recomendado: publicar con el sobre común (F2) |
 
-Una corrección manual (`POST .../correcciones`) publica otro `lead-calificado` con `origen=MANUAL`. El orquestador lo registra como paso de la saga `CORRECCION_CALIFICACION` y **no** relanza el resumen (a confirmar con el equipo).
+Una corrección manual (`POST .../correcciones`) publica otro `lead-calificado` con `origen=MANUAL`. El orquestador lo registra como paso del flujo `CORRECCION_CALIFICACION` y **no** relanza el resumen (a confirmar con el equipo).
 
 ### 4.4 vehiculos — `VehiculosMicroservice`
 
@@ -157,7 +157,7 @@ Es el servicio que menos cambia: solo recibe.
 | R10 `GET /vehiculos/{id}` | Vía `/api/vehiculos` | F1 | `VEHICULOS_URL=<orq>/api` |
 | R11 Ollama | **No**: es un proveedor externo, no un microservicio | — | — |
 | K3 consume `resumen-solicitado` | Igual. En F2 lo publica el orquestador **con el mismo contrato**, así que ia-resumen no se entera del cambio | — | Ninguno |
-| K4 publica `resumen-generado` | Igual; el orquestador escucha y cierra la saga | F1 | Ninguno |
+| K4 publica `resumen-generado` | Igual; el orquestador escucha y cierra el flujo | F1 | Ninguno |
 | `POST /resumen`, `/resumen-ia` | Vía `/api/resumen*` si alguien los usa | F1 | Ninguno |
 | Dockerfile | No tiene; para el compose del ecosistema hace falta | F2 | Agregar Dockerfile (responsabilidad del repo) |
 
@@ -169,7 +169,7 @@ Es el servicio que menos cambia: solo recibe.
 | R12 health checks a cada servicio | **No** pasan por el orquestador: el monitor tiene que ver a cada servicio directo para diagnosticar bien | — | — |
 | Objetivos monitoreados | Agregar **orquestador** (`/health`) e **ia-resumen** (`/openapi.json`) | F2 | Dos entradas más en `crm.monitor.servicios` |
 
-**Reparto con el orquestador:** el monitor hace chequeos **activos** (sondea cada 15 s aunque no haya tráfico). El orquestador hace observación **pasiva** (mide las llamadas reales que pasan por él y el tiempo entre pasos de cada saga). Se complementan. El monitor contesta "¿está vivo?". El orquestador contesta "¿está respondiendo bien a los pedidos reales y en qué paso se trabó cada flujo?".
+**Reparto con el orquestador:** el monitor hace chequeos **activos** (sondea cada 15 s aunque no haya tráfico). El orquestador hace observación **pasiva** (mide las llamadas reales que pasan por él y el tiempo entre pasos de cada flujo). Se complementan. El monitor contesta "¿está vivo?". El orquestador contesta "¿está respondiendo bien a los pedidos reales y en qué paso se trabó cada flujo?".
 
 ### 4.7 clientes* (cuando se sume)
 
@@ -211,17 +211,17 @@ El tráfico **entre servicios** no usa el token del telemarketer: se autentica c
 | Consulta puntual | `GET /api/multas/{patente}` vía proxy, si hace falta | F1 |
 | Scraping a sitios externos | **No** pasa por el orquestador | — |
 
-Saga propia `CONSULTA_MULTAS_VEHICULO`, con clave de negocio `vehiculoId`:
+Flujo propio `CONSULTA_MULTAS_VEHICULO`, con clave de negocio `vehiculoId`:
 
 ```
-SOLICITADA ──► CONSULTANDO_MULTAS ──► (multas.eventos) ──► ACTUALIZANDO_VEHICULO ──► COMPLETADA
+SOLICITADA ──► CONSULTANDO_MULTAS ──► (multas.eventos) ──► ACTUALIZANDO_VEHICULO ──► COMPLETADO
                      │ timeout / error del scraper                │ error de vehiculos
                      ▼                                            ▼
-               REINTENTO (backoff, máx. N) ──► FALLIDA         FALLIDA
+               REINTENTO (backoff, máx. N) ──► FALLIDO         FALLIDO
 ```
 
 - **Disparadores:**
-  - El alta de una unidad: el `POST /api/vehiculos` pasa por el orquestador y, si responde 201, se abre la saga.
+  - El alta de una unidad: el `POST /api/vehiculos` pasa por el orquestador y, si responde 201, se abre el flujo.
   - Un barrido periódico (ej. diario) de las unidades disponibles. El orquestador agenda el flujo; **qué unidades corresponde consultar lo responde vehiculos**, por ejemplo con `GET /vehiculos?disponible=true`.
   - Un pedido manual: `POST /api/orquestador/multas/{vehiculoId}`.
 - **El orquestador** decide la frecuencia, los reintentos y el backoff, y respeta un límite de concurrencia para no saturar al scraper ni a los sitios que scrapea.
@@ -242,11 +242,11 @@ SOLICITADA ──► CONSULTANDO_MULTAS ──► (multas.eventos) ──► ACT
 
 | Tópico | Rol del orquestador | Fase | Para qué |
 |---|---|---|---|
-| `preformulario-completado` | Consume | F1 | Saga → `CALIFICACION_PENDIENTE` |
-| `lead-calificado` | Consume | F1 | Saga → `CALIFICADO` (o paso de corrección) |
-| `resumen-solicitado` | Consume (F1) → **Produce** (F2) | F1/F2 | Saga → `RESUMEN_PENDIENTE` |
-| `resumen-generado` | Consume | F1 | Saga → `COMPLETADA` |
-| `preformulario-completado-dlt` | Consume | F1 | Saga → `FALLIDA` |
+| `preformulario-completado` | Consume | F1 | Flujo → `CALIFICACION_PENDIENTE` |
+| `lead-calificado` | Consume | F1 | Flujo → `CALIFICADO` (o paso de corrección) |
+| `resumen-solicitado` | Consume (F1) → **Produce** (F2) | F1/F2 | Flujo → `RESUMEN_PENDIENTE` |
+| `resumen-generado` | Consume | F1 | Flujo → `COMPLETADO` |
+| `preformulario-completado-dlt` | Consume | F1 | Flujo → `FALLIDO` |
 | ~~`orquestador-dlt`~~ | — | — | **Descartado:** el plan free de Aiven permite 5 tópicos y ya están en uso. Ver §5.2. |
 
 - **Grupo consumidor:** `orquestador`, propio, para no robarle mensajes a los demás grupos. Cada grupo recibe su copia completa.
@@ -298,8 +298,15 @@ Mismo esquema que vehiculos, que es el más prolijo:
 
 ### 6.2 Modelo propuesto
 
+**Sobre los nombres.** Lo que en la teoría de microservicios se llama **saga** (§2) acá se llama **flujo**, porque al equipo le resulta más claro (decisión del 2026-11-14):
+
+- Un **flujo** es una ejecución de un proceso de negocio de varios pasos. Por ejemplo, "el registro del lead X".
+- Un **paso** es cada interacción con un servicio dentro de ese flujo. Por ejemplo, "calificacion respondió en 1,2 s".
+
+La migración `0002` renombró las tablas, que originalmente se llamaban `saga` y `saga_paso`.
+
 ```
-saga
+flujo
 ├─ id                uuid PK
 ├─ tipo              text      REGISTRO_LEAD | CORRECCION_CALIFICACION | ...
 ├─ clave_negocio     text      leadId (índice)
@@ -309,14 +316,14 @@ saga
 ├─ intentos          int
 ├─ ultimo_error      text null
 ├─ vence_en          timestamptz null   deadline del paso actual
-├─ iniciada_en       timestamptz
-├─ actualizada_en    timestamptz
-├─ finalizada_en     timestamptz null
+├─ iniciado_en       timestamptz
+├─ actualizado_en    timestamptz
+├─ finalizado_en     timestamptz null
 └─ version           int       bloqueo optimista
 
-saga_paso
+flujo_paso
 ├─ id                bigserial PK
-├─ saga_id           uuid FK → saga
+├─ flujo_id          uuid FK → flujo
 ├─ paso              text      ej. CALIFICAR_LEAD
 ├─ servicio          text      leads | calificacion | ia-resumen | ...
 ├─ canal             text      REST | KAFKA
@@ -361,42 +368,48 @@ outbox                    (fase 2: publicación confiable de comandos)
 - **No:** cuerpos de request/response, nombre, email, teléfono, CUIL, montos. En el happy path la base solo recibe unos pocos `INSERT`/`UPDATE` por lead.
 - `outbox.mensaje` (fase 2) es la única excepción: contiene el payload del comando a publicar (datos comerciales, sin datos personales, igual que hoy viajan por Kafka). Se purga al publicarse.
 
-### 6.4 Máquina de estados: saga `REGISTRO_LEAD`
+### 6.4 Máquina de estados: flujo `REGISTRO_LEAD`
+
+**Implementado en la fase 1b** (`app/flujos/registro_lead.py`):
 
 ```
-           POST /api/leads (202 con lead_id)
+           K1 preformulario-completado (leads)
                        │
                        ▼
-               LEAD_REGISTRADO ──────────────┐
-                       │ K1 preformulario-   │ vence_en sin K1
-                       │    completado       ▼
-                       ▼                  EXPIRADA
-            CALIFICACION_PENDIENTE ──── K5 DLT ──► FALLIDA
-                       │ K2 lead-calificado       ▲
-                       ▼                          │
-                   CALIFICADO                     │
-                       │ K3 resumen-solicitado    │
-                       │ (F1: lo ve; F2: lo       │
-                       │  publica el orquestador) │
-                       ▼                          │
-               RESUMEN_PENDIENTE ── error/timeout ┘
-                       │ K4 resumen-generado
+            CALIFICACION_PENDIENTE ──── K5 DLT ──► FALLIDO
+                       │ K2 lead-calificado
                        ▼
-                   COMPLETADA
+                   CALIFICADO
+                       │ K3 resumen-solicitado (leads)
+                       ▼
+               RESUMEN_PENDIENTE
+                       │ K4 resumen-generado (ia-resumen)
+                       ▼
+                   COMPLETADO
+
+   Desde CALIFICACION_PENDIENTE, CALIFICADO o RESUMEN_PENDIENTE, si se vence
+   el plazo → EXPIRADO. Si después llega el evento que faltaba, el flujo sigue.
 ```
 
-- `POST /api/leads` con respuesta distinta de 202 → la saga se crea directamente en `FALLIDA`, con el paso `REGISTRAR_LEAD` y el código/servicio que falló (incluye la falla de clientes que leads propaga como 422/502/503).
-- Cada transición abre o cierra un `saga_paso` y registra la latencia **entre** pasos: cuánto tardó calificacion en calificar o la IA en resumir.
-- Timeouts por paso configurables (ej. calificación 2 min, resumen 5 min). Un job periódico marca `EXPIRADA` lo que venció.
-- Llegadas fuera de orden (ej. K2 antes de que el orquestador procese el 202) se toleran: la saga se crea con el primer mensaje que llegue para ese `leadId`.
+- **El flujo nace con `preformulario-completado`, no con el 202 del proxy.** El proxy reenvía la respuesta en streaming sin leerla, así que no conoce el `leadId`. Además, el evento ya trae el `correlationId` original del front. Los `POST /api/leads` que fallan antes de crear el lead se ven en `/api/orquestador/servicios`.
+- **Pasos con latencia:**
+  - `CALIFICAR_LEAD` mide de K1 a K2: cuánto tardó calificacion.
+  - `GENERAR_RESUMEN` mide de K3 a K4: cuánto tardó la IA.
+  - Se usa el timestamp de cada mensaje en Kafka, así todos se miden con el mismo reloj.
+- **Vencimientos:** cada `FLUJO_INTERVALO_VENCIMIENTO_SEGUNDOS`, una tarea marca `EXPIRADO` lo que venció. El paso pendiente queda en `TIMEOUT` y el flujo guarda en `ultimo_error` qué servicio no respondió. Los plazos son `FLUJO_TIMEOUT_CALIFICACION_SEGUNDOS` y `FLUJO_TIMEOUT_RESUMEN_SEGUNDOS`. Para `CALIFICADO` se usa el plazo del resumen, que es lo que espera de leads.
+- **Robustez:**
+  - Los duplicados se descartan con `evento_procesado`.
+  - Los eventos desordenados nunca hacen retroceder el estado.
+  - Dos eventos simultáneos del mismo lead no duplican el flujo, gracias a la restricción única `(tipo, clave_negocio)` y al bloqueo `FOR UPDATE`.
+  - Una corrección manual (`lead-calificado` con `origen=MANUAL`) se registra como paso `CORRECCION_CALIFICACION` sin cambiar el estado.
 
 ### 6.5 Recuperación
 
 | Situación | Qué hace el orquestador |
 |---|---|
-| **Se cae el orquestador** | Al volver, el consumidor Kafka retoma desde el último offset confirmado y avanza las sagas con los eventos acumulados. Las requests HTTP en vuelo se pierden; el que llamó recibe error y reintenta, como hoy. |
-| **Se cae calificacion** | Los K1 esperan en Kafka. Las sagas quedan en `CALIFICACION_PENDIENTE` y, al vencer, pasan a `EXPIRADA` con alerta. Cuando calificacion vuelve y publica K2, la saga **sale de `EXPIRADA`** y sigue. |
-| **Se cae ia-resumen** | Igual, en `RESUMEN_PENDIENTE`. En F2 el orquestador puede **re-publicar** `resumen-solicitado` (`POST /api/orquestador/sagas/{id}/reintentar`); como leads sobrescribe el resumen, repetir es seguro. |
+| **Se cae el orquestador** | Al volver, el consumidor Kafka retoma desde el último offset confirmado y avanza los flujos con los eventos acumulados. Las requests HTTP en vuelo se pierden; el que llamó recibe error y reintenta, como hoy. |
+| **Se cae calificacion** | Los K1 esperan en Kafka. Los flujos quedan en `CALIFICACION_PENDIENTE` y, al vencer, pasan a `EXPIRADO` con alerta. Cuando calificacion vuelve y publica K2, el flujo **sale de `EXPIRADO`** y sigue. |
+| **Se cae ia-resumen** | Igual, en `RESUMEN_PENDIENTE`. En F2 el orquestador puede **re-publicar** `resumen-solicitado` (`POST /api/orquestador/flujos/{id}/reintentar`); como leads sobrescribe el resumen, repetir es seguro. |
 | **Se cae un servicio en una llamada REST** | El proxy registra `503`/`504` en `llamada_servicio`; la tasa de errores por servicio se ve en `GET /api/orquestador/servicios`. |
 | **Mensaje duplicado** | `evento_procesado` lo descarta (RNF-04). |
 
@@ -421,7 +434,7 @@ app/
 ├─ config.py               Settings (pydantic-settings)
 ├─ api/
 │  ├─ proxy.py             /api/{servicio}/** → servicio destino
-│  ├─ sagas.py             /api/orquestador/sagas
+│  ├─ flujos.py            /api/orquestador/flujos
 │  ├─ servicios.py         /api/orquestador/servicios (métricas)
 │  └─ health.py            /health
 ├─ middleware/
@@ -430,9 +443,9 @@ app/
 │  ├─ config.py            seguridad SASL_SSL, tópicos
 │  ├─ consumer.py          despacho por tópico
 │  └─ producer.py          sobre común + outbox
-├─ saga/
+├─ flujos/
 │  ├─ maquina.py           transiciones genéricas
-│  └─ registro_lead.py     definición de la saga REGISTRO_LEAD
+│  └─ registro_lead.py     definición del flujo REGISTRO_LEAD
 ├─ db/
 │  ├─ session.py
 │  └─ models.py
@@ -450,9 +463,9 @@ ca.pem
 | Método | Ruta | Descripción |
 |---|---|---|
 | GET | `/health` | Estado propio + DB + Kafka (para el monitor y el healthcheck de Docker) |
-| GET | `/api/orquestador/sagas?leadId=&estado=&tipo=` | Buscar sagas |
-| GET | `/api/orquestador/sagas/{id}` | Saga con todos sus pasos y latencias |
-| POST | `/api/orquestador/sagas/{id}/reintentar` | Reintentar el paso actual (F2) |
+| GET | `/api/orquestador/flujos?leadId=&estado=&tipo=` | Buscar flujos |
+| GET | `/api/orquestador/flujos/{id}` | Flujo con todos sus pasos y latencias |
+| POST | `/api/orquestador/flujos/{id}/reintentar` | Reintentar el paso actual (F2) |
 | GET | `/api/orquestador/servicios` | Por servicio: llamadas, % de error, latencia p50/p95, último error (ventana configurable) |
 | GET | `/docs`, `/openapi.json` | Swagger de FastAPI |
 
@@ -489,9 +502,9 @@ KAFKA_SASL_USERNAME=
 KAFKA_SASL_PASSWORD=
 KAFKA_SSL_CAFILE=ca.pem
 
-# --- sagas ---
-SAGA_TIMEOUT_CALIFICACION_SEGUNDOS=120
-SAGA_TIMEOUT_RESUMEN_SEGUNDOS=300
+# --- flujos ---
+FLUJO_TIMEOUT_CALIFICACION_SEGUNDOS=120
+FLUJO_TIMEOUT_RESUMEN_SEGUNDOS=300
 AUDITORIA_RETENCION_DIAS=7
 ```
 
@@ -511,9 +524,9 @@ AUDITORIA_RETENCION_DIAS=7
 |---|---|---|
 | **0. Esqueleto** | FastAPI + `/health` + Dockerfile + compose + config + Alembic con las tablas | Ninguno |
 | **1a. Proxy** ✅ | `/api/{servicio}/**` con correlation id, auditoría en `llamada_servicio` y `/api/orquestador/servicios`. Despliegue en Render: [03-despliegue-render.md](03-despliegue-render.md) | Solo URLs en `.env` (front, leads, calificacion, ia-resumen) |
-| **1b. Observación de sagas** | Consumir K1–K5, máquina `REGISTRO_LEAD`, timeouts y `/api/orquestador/sagas` | Ninguno |
+| **1b. Seguimiento de flujos** ✅ | Consumir K1–K5, máquina `REGISTRO_LEAD`, timeouts y `/api/orquestador/flujos` | Ninguno |
 | **2. Orquestación real** | El orquestador publica `resumen-solicitado` (outbox), reintentos manuales, inyección de `X-Api-Key`, `X-Origen-Servicio` | leads deja de publicar K3; leads agrega `/health`; monitor suma orquestador e ia-resumen; calificacion publica con sobre (recomendado) |
-| **3. Nuevos servicios** | clientes y auth (validación de JWT en el orquestador) al ruteo; saga `CONSULTA_MULTAS_VEHICULO` con el scraper y vehiculos | Los de esos repos; el front agrega login |
+| **3. Nuevos servicios** | clientes y auth (validación de JWT en el orquestador) al ruteo; flujo `CONSULTA_MULTAS_VEHICULO` con el scraper y vehiculos | Los de esos repos; el front agrega login |
 | **4. Orquestación completa** | Tópicos de comandos y eventos por servicio; ningún servicio escucha a otro | Todos: cambiar qué tópico escucha y en cuál publica cada uno |
 
 ## 9. Decisiones abiertas para el equipo
@@ -531,4 +544,4 @@ AUDITORIA_RETENCION_DIAS=7
    - ¿Las multas afectan algo visible (precio, disponibilidad)? Eso lo decide vehiculos.
 9. **Auth:** ¿JWT firmado con clave asimétrica (el orquestador solo necesita la pública) o secreto compartido? ¿Hay roles además del telemarketer?
 10. **BCRA:** ¿desaparece el servicio precalificacion y la consulta la hace clientes directo?
-11. **Front:** ¿quieren mostrar el estado del flujo (`/api/orquestador/sagas?leadId=`) en la cola o en la confirmación del preformulario?
+11. **Front:** ¿quieren mostrar el estado del flujo (`/api/orquestador/flujos?leadId=`) en la cola o en la confirmación del preformulario?

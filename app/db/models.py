@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, MetaData, Text, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, MetaData, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -20,13 +20,23 @@ SCHEMA = get_settings().db_schema
 
 
 class Base(DeclarativeBase):
-    metadata = MetaData(schema=SCHEMA)
+    # La convención de índices tiene que coincidir con los nombres que crean las
+    # migraciones (ix_<tabla>_<columna>), si no `alembic check` detecta diferencias.
+    metadata = MetaData(
+        schema=SCHEMA,
+        naming_convention={"ix": "ix_%(table_name)s_%(column_0_name)s"},
+    )
 
 
-class Saga(Base):
-    """Instancia de un flujo de negocio de varios pasos (ej. REGISTRO_LEAD)."""
+class Flujo(Base):
+    """Instancia de un flujo de negocio de varios pasos (ej. REGISTRO_LEAD).
 
-    __tablename__ = "saga"
+    En la teoría de microservicios es el patrón *Saga*; en el código y la base
+    se llama `flujo` por claridad (ver docs/02-propuesta-orquestador.md §6.2).
+    """
+
+    __tablename__ = "flujo"
+    __table_args__ = (UniqueConstraint("tipo", "clave_negocio", name="uq_flujo_tipo_clave_negocio"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tipo: Mapped[str] = mapped_column(Text, nullable=False)
@@ -37,30 +47,30 @@ class Saga(Base):
     intentos: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     ultimo_error: Mapped[Optional[str]] = mapped_column(Text)
     vence_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
-    iniciada_en: Mapped[datetime] = mapped_column(
+    iniciado_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    actualizada_en: Mapped[datetime] = mapped_column(
+    actualizado_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
-    finalizada_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    finalizado_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
-    pasos: Mapped[list["SagaPaso"]] = relationship(
-        back_populates="saga", cascade="all, delete-orphan", order_by="SagaPaso.id"
+    pasos: Mapped[list["FlujoPaso"]] = relationship(
+        back_populates="flujo", cascade="all, delete-orphan", order_by="FlujoPaso.id"
     )
 
     __mapper_args__ = {"version_id_col": version}
 
 
-class SagaPaso(Base):
-    """Un paso de una saga: interacción con un servicio y su tiempo de respuesta."""
+class FlujoPaso(Base):
+    """Un paso de un flujo: interacción con un servicio y su tiempo de respuesta."""
 
-    __tablename__ = "saga_paso"
+    __tablename__ = "flujo_paso"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    saga_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("saga.id", ondelete="CASCADE"), nullable=False, index=True
+    flujo_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("flujo.id", ondelete="CASCADE"), nullable=False, index=True
     )
     paso: Mapped[str] = mapped_column(Text, nullable=False)
     servicio: Mapped[str] = mapped_column(Text, nullable=False)
@@ -76,7 +86,7 @@ class SagaPaso(Base):
     referencia: Mapped[Optional[str]] = mapped_column(Text)
     detalle_error: Mapped[Optional[str]] = mapped_column(Text)
 
-    saga: Mapped[Saga] = relationship(back_populates="pasos")
+    flujo: Mapped[Flujo] = relationship(back_populates="pasos")
 
 
 class LlamadaServicio(Base):

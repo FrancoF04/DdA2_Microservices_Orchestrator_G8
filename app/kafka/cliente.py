@@ -5,7 +5,7 @@ ia-resumen) y una tarea de fondo reintenta la conexión cada
 `kafka_reintento_conexion_segundos`.
 
 El consumer se suscribe a los tópicos que tengan un manejador registrado en
-`MANEJADORES`. En la fase 0 no hay ninguno; los agrega la fase 1b (sagas).
+`MANEJADORES`. En la fase 0 no hay ninguno; los agrega la fase 1b (seguimiento de flujos).
 """
 
 from __future__ import annotations
@@ -164,7 +164,7 @@ class ClienteKafka:
             except json.JSONDecodeError as exc:
                 logger.error("JSON inválido en %s@%s: %s", record.topic, record.offset, exc)
             except Exception as exc:  # noqa: BLE001
-                # Fase 1b: marcar la saga con el error (sin tópico DLT propio por el límite de Aiven).
+                # Fase 1b: marcar el flujo con el error (sin tópico DLT propio por el límite de Aiven).
                 logger.exception("Error procesando %s@%s: %s", record.topic, record.offset, exc)
             await self.consumer.commit()
 

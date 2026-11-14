@@ -22,6 +22,17 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _solo_schema_propio(nombre, tipo, nombre_padre) -> bool:
+    """Limita la comparación (autogenerate / `alembic check`) al schema del orquestador.
+
+    La base es compartida (un schema por servicio, como en Supabase) y el rol del
+    orquestador no tiene permisos sobre los schemas de los demás.
+    """
+    if tipo == "schema":
+        return nombre == SCHEMA
+    return True
+
+
 def _url() -> str:
     url = get_settings().database_url
     if not url:
@@ -35,6 +46,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         include_schemas=True,
+        include_name=_solo_schema_propio,
         version_table_schema=SCHEMA,
     )
     with context.begin_transaction():
@@ -54,6 +66,7 @@ def _correr(connection: Connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         include_schemas=True,
+        include_name=_solo_schema_propio,
         version_table_schema=SCHEMA,
     )
     with context.begin_transaction():
@@ -61,7 +74,13 @@ def _correr(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    engine = create_async_engine(_url(), poolclass=pool.NullPool)
+    # search_path=public para que el schema del orquestador NO sea el "por defecto"
+    # de esta conexión: si lo es, Alembic lo trata como schema anónimo y no lo
+    # empareja con los modelos (que lo declaran explícito). Las migraciones
+    # indican el schema en cada operación, así que no dependen del search_path.
+    engine = create_async_engine(
+        _url(), poolclass=pool.NullPool, connect_args={"options": "-c search_path=public"}
+    )
     async with engine.connect() as connection:
         await connection.run_sync(_correr)
         await connection.commit()
