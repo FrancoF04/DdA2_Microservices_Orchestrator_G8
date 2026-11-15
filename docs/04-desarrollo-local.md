@@ -17,7 +17,7 @@ docker compose up -d
 | PostgreSQL | `localhost:5432` | Una sola base (`postgres`) con **un schema y un usuario por servicio**, como en Supabase. Usuario = contraseña = nombre del servicio. Si ya tenés un Postgres en 5432: `POSTGRES_PUERTO=5433 docker compose up -d`. |
 | Kafka | `localhost:9092` | Sin autenticación y **sin límite de tópicos**. |
 | kafka-ui | <http://localhost:8090> | Para ver tópicos y mensajes. |
-| clientes (simulado) | `http://localhost:8082` | Reemplaza al servicio real hasta que exista. Ver [dev/README.md](../dev/README.md). |
+| clientes (simulado, **opcional**) | `http://localhost:8082` | Solo si no levantás el servicio real: `docker compose --profile clientes-simulado up -d`. Ver [dev/README.md](../dev/README.md). Con el real en marcha, no se usa. |
 
 Schemas creados: `leads`, `calificacion`, `vehiculos`, `clientes`, `monitor`, `orquestador`, `auth`, `multas`.
 
@@ -31,8 +31,8 @@ Schemas creados: `leads`, `calificacion`, `vehiculos`, `clientes`, `monitor`, `o
 Estas son las variables de cada servicio. Las URLs entre servicios apuntan al **orquestador** (`http://127.0.0.1:8080/api`), para que todo el tráfico pase por él.
 
 - **Servicios Python (orquestador, leads, ia-resumen):** van en un `.env` en la raíz del repo, que se lee solo al arrancar.
-- **Servicios Java (calificacion, vehiculos, monitor):** Spring Boot **no lee** archivos `.env`. Hay que cargarlas como variables de entorno en la terminal antes del `./mvnw`, o en la configuración de ejecución del IDE (en IntelliJ: *Run/Debug Configurations → Environment variables*). Vehiculos trae scripts para eso (`scripts/cargar-env.ps1` y `scripts/cargar-env.sh`), que leen `infra/.env`.
-- **Los tres repos Java traen el Maven Wrapper:** alcanza con JDK 21 o superior, no hace falta instalar Maven.
+- **Servicios Java (clientes, calificacion, vehiculos, monitor):** Spring Boot **no lee** archivos `.env`. Hay que cargarlas como variables de entorno en la terminal antes del `./mvnw`, o en la configuración de ejecución del IDE (en IntelliJ: *Run/Debug Configurations → Environment variables*). Vehiculos trae scripts para eso (`scripts/cargar-env.ps1` y `scripts/cargar-env.sh`), que leen `infra/.env`.
+- **Los cuatro repos Java traen el Maven Wrapper:** alcanza con JDK 21 o superior, no hace falta instalar Maven.
 
 > **En Windows usar `127.0.0.1` y no `localhost`** en las URLs entre servicios: `localhost` prueba primero IPv6 y, si el servicio no escucha ahí, tarda unos 2 s extra en cada conexión.
 
@@ -47,6 +47,8 @@ Estas son las variables de cada servicio. Las URLs entre servicios apuntan al **
 | vehiculos | 8083 |
 | calificacion | 8084 |
 | monitor | 8085 |
+| auth (propuesto, en desarrollo) | 8086 |
+| multas (propuesto, en desarrollo) | 8087 |
 | front | 5173 |
 
 ### Orquestador (este repo)
@@ -79,7 +81,7 @@ Alternativa sin instalar Python: `docker compose --profile orquestador up -d` (e
 DATABASE_URL=postgresql+psycopg://leads:leads@127.0.0.1:5432/postgres
 FRONTEND_LIST=["http://localhost:5173"]
 CLIENTES_URL=http://127.0.0.1:8080/api
-CLIENTES_CLAVE_LEADS=clave-local-leads
+CLIENTES_CLAVE_LEADS=solo-local-clave-de-servicio-leads-0001
 KAFKA_ENABLED=true
 KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
 ```
@@ -118,7 +120,7 @@ SPRING_DATASOURCE_PASSWORD=calificacion
 SPRING_KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
 CLIENTES_SERVICE_URL=http://127.0.0.1:8080/api
 VEHICULOS_SERVICE_URL=http://127.0.0.1:8080/api
-CLIENTES_CLAVE_CALIFICACION=clave-local-calificacion
+CLIENTES_CLAVE_CALIFICACION=solo-local-clave-de-servicio-calificacion-0001
 ```
 
 ```bash
@@ -144,6 +146,30 @@ VEHICULOS_CLAVE_ESCRITURA=clave-local-vehiculos-de-32-caracteres-o-mas
 ```
 
 El seed carga 8 unidades. Por ejemplo, el Toyota Corolla `a0000000-0000-4000-8000-000000000001`, de $24.500.000, sirve como `vehiculoId` de prueba.
+
+### ClientMicroservice (clientes)
+
+Es el servicio real; reemplaza al simulador. Su perfil `local` (el que usa por defecto) ya trae claves ficticias y espera una base propia (`clientes_db`) y Kafka en el 29092, así que alcanza con redirigirlo a nuestra infra:
+
+```dotenv
+SPRING_DATASOURCE_URL=jdbc:postgresql://127.0.0.1:5432/postgres
+KAFKA_PUERTO_HOST=9092
+```
+
+Usuario y contraseña de la base (`clientes` / `clientes`), las claves de servicio y las del CUIL ya vienen por defecto en el perfil `local`. Por eso las claves de leads y calificacion de arriba son las que trae el perfil: `solo-local-clave-de-servicio-leads-0001` y `solo-local-clave-de-servicio-calificacion-0001`. Exige claves de **32 caracteres o más y distintas entre sí**; las `clave-local-*` de antes eran más cortas y el servicio no arrancaba.
+
+```bash
+./mvnw -pl contracts -am install -DskipTests       # una sola vez (y cuando cambie contracts)
+./mvnw -pl clientes-service spring-boot:run        # PowerShell: .\mvnw.cmd ...
+```
+
+El comando del README de clientes (`-pl clientes-service -am spring-boot:run`) **falla**: con `-am` Maven también intenta correr `spring-boot:run` sobre el POM padre ("Unable to find a suitable main class"). Por eso se instala `contracts` aparte y se corre solo el módulo del servicio.
+
+Flyway crea las tablas en el schema `clientes`. Swagger en <http://localhost:8082/swagger-ui.html> y salud en `/actuator/health`.
+
+Crea sus propios tópicos (`cliente-actualizado`, `cliente-anonimizado` y la DLT `lead-calificado.clientes.DLT`) y **no crea `lead-calificado`**, que es de calificacion (con el orquestador levantado, que lo escucha, se crea solo).
+
+Al arrancar lee `lead-calificado` desde el principio. Los mensajes viejos que tengas en el volumen de Kafka pueden terminar en la DLT con un WARN: es normal. Los mensajes reales de calificacion hoy **también van a la DLT** por el formato de `fecha` (ver [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md)); hasta que se corrija, el historial de clientes queda vacío en el flujo real.
 
 ### MonitorMicroservice
 
@@ -217,4 +243,5 @@ En Git Bash anteponer `MSYS_NO_PATHCONV=1` a los comandos `docker compose exec`,
 | leads no arranca: `No module named 'psycopg2'` | `DATABASE_URL` con `postgresql://` y SQLAlchemy 2.0 instalado | Usar `postgresql+psycopg://` |
 | Cada llamada entre servicios tarda ~2 s de más | `localhost` en Windows | Usar `127.0.0.1` |
 | `port is already allocated` al levantar el compose | Otro Postgres o Kafka en 5432/9092 (por ejemplo el compose de leads) | Apagar el otro, o `POSTGRES_PUERTO=5433` |
+| clientes no arranca o responde `401 CLAVE_SERVICIO_INVALIDA` | Claves de servicio de menos de 32 caracteres, iguales entre sí, o distintas entre clientes y quien lo llama | Usar las del perfil `local` (ver sección de clientes) en los `.env` de leads y calificacion |
 | Los schemas no existen | El volumen de Postgres ya tenía datos de antes del script de inicialización | `docker compose down -v` y volver a levantar |
