@@ -171,14 +171,22 @@ Es el servicio que menos cambia: solo recibe.
 
 **Reparto con el orquestador:** el monitor hace chequeos **activos** (sondea cada 15 s aunque no haya tráfico). El orquestador hace observación **pasiva** (mide las llamadas reales que pasan por él y el tiempo entre pasos de cada flujo). Se complementan. El monitor contesta "¿está vivo?". El orquestador contesta "¿está respondiendo bien a los pedidos reales y en qué paso se trabó cada flujo?".
 
-### 4.7 clientes* (cuando se sume)
+### 4.7 clientes — `ClientMicroservice`
 
-| Interacción | Con orquestador | Fase |
-|---|---|---|
-| Entrante R4, R6, R8, R9 | Vía `/api/clientes/**` | F1 |
-| R13 consulta al BCRA | **No**: proveedor externo (si clientes lo consulta directo) | — |
-| K2 consume `lead-calificado` | Igual; el orquestador ya lo escucha. En el objetivo final pasa a ser un comando `clientes.comandos` (registrar historial) | F1 / final |
-| Pendiente de confirmar | Puerto, si `GET /clientes/{id}` exige `X-Api-Key`, si expone `/actuator/health` | — |
+Ya existe y está probado detrás del proxy (alta con clave, ficha con `ETag`, `PATCH` con `If-Match`, situación crediticia e historial). Detalle en [01 §3.7](01-relevamiento-ecosistema.md).
+
+| Interacción | Con orquestador | Fase | Cambio en el repo |
+|---|---|---|---|
+| Entrante R4, R6, R8, R9 | Vía `/api/clientes/**`. El proxy ya pasa `ETag`, `If-Match` y `X-Usuario` | F1 | Ninguno |
+| `GET /clientes/{id}` sin clave | Confirmado: no exige `X-Api-Key`, así que ia-resumen (I10) funciona sin cambios | F1 | Ninguno |
+| Salud | `/actuator/health` (el monitor ya lo usa) | — | Ninguno |
+| R13 consulta al BCRA | Hoy es una fuente **simulada** dentro de clientes. Si pasa a BCRA real, es un proveedor externo y **no** pasa por el orquestador | — | — |
+| K2 consume `lead-calificado` | Igual; el orquestador también lo escucha. En el objetivo final pasa a ser el comando `RegistrarCalificacion` en `crm.comandos` | F1 / final | Pasar a 3 tópicos |
+| Publica `cliente-actualizado` y `cliente-anonimizado` | Nadie los consume hoy. leads los necesita para mantener sus copias; en el objetivo final pasan a `crm.eventos` y el orquestador decide a quién avisar | final | Pasar a 3 tópicos |
+| DLT propia `lead-calificado.clientes.DLT` | Pasa a `crm.dlt` | final | Pasar a 3 tópicos |
+| Formato de `fecha` de `lead-calificado` | **Hoy incompatible** con calificacion (array vs ISO-8601): todo va a la DLT. Hay que corregirlo antes de la prueba completa | F1 | Ver [05](05-cambios-en-otros-repos.md) |
+
+Las escrituras del personal (`PATCH`, no contactar, anonimización) hoy no piden clave porque no hay autenticación: cuando entre **auth** (§4.8) pasan a ser rutas protegidas y el orquestador inyecta `X-Usuario`.
 
 ### 4.8 auth* (cuando se sume)
 
@@ -188,7 +196,7 @@ Es el servicio que **más cambia al orquestador**, porque lo convierte en el pun
 |---|---|---|
 | Front `POST /auth/login` | Vía `/api/auth/**` (ruta pública) | F1 |
 | Validación del token | El orquestador valida el JWT **localmente** (firma con clave pública/JWKS de auth, o secreto compartido) en cada request de rutas protegidas. **No** llama a auth en cada request: así, si auth se cae, los telemarketers ya logueados siguen trabajando | F1 |
-| Identidad hacia los servicios | El orquestador reenvía `X-Usuario-Id` / `X-Usuario-Rol` sacados del token. Los servicios confían en ese header porque solo el orquestador los alcanza | F2 |
+| Identidad hacia los servicios | El orquestador reenvía `X-Usuario` (y `X-Usuario-Rol`, si hay roles) sacados del token. **`X-Usuario` es el header que clientes ya lee** para registrar quién operó. El orquestador **descarta cualquier `X-Usuario` que venga de afuera**, para que nadie se haga pasar por otro telemarketer. Los servicios confían en ese header porque solo el orquestador los alcanza | F2 |
 
 Clasificación de rutas:
 
@@ -200,13 +208,15 @@ Clasificación de rutas:
 
 El tráfico **entre servicios** no usa el token del telemarketer: se autentica con la clave de cada servicio (§3.2).
 
-### 4.9 scraper de multas* (cuando se sume)
+### 4.9 scraper de multas — `InfraccionScrapper`
 
-**Decisión (2026-11-14):** las multas son de los **autos en stock** de la agencia. **No forman parte del flujo del lead.** Son un flujo propio entre el orquestador, el scraper y vehiculos.
+**Decisión (2026-11-14):** las multas son de los **autos en stock** de la agencia. **No forman parte del flujo del lead.** Son un flujo propio entre el orquestador, el scraper y vehiculos. En el ecosistema el servicio se llama **multas** (el repo se llama `InfraccionScrapper`).
+
+**Estado:** hoy es una librería y CLI de Node que consulta la ANSV por patente (ver [01 §3.9](01-relevamiento-ecosistema.md)). Para entrar al flujo tiene que convertirse en un servicio que escuche comandos por Kafka (lista en [05](05-cambios-en-otros-repos.md)).
 
 | Interacción | Con orquestador | Fase |
 |---|---|---|
-| Pedido de deudas por patente | **Asincrónico por Kafka**: el orquestador publica en `multas.comandos`, el scraper responde en `multas.eventos`. El scraping es lento y falla seguido; por REST bloquearía al que llama | F3 |
+| Pedido de deudas por patente | **Asincrónico por Kafka** (decidido 2026-11-14): el orquestador publica el comando `ConsultarMultas` en `crm.comandos` con `destino: multas`, y el scraper responde con el evento `MultasConsultadas` (o `ConsultaMultasFallida`) en `crm.eventos`. El scraping es lento y falla seguido; por REST bloquearía al que llama. Ver §5.2 | F3 |
 | Guardar el resultado en el vehículo | El orquestador manda el resultado a vehiculos: `PUT /vehiculos/{id}/multas` o comando `vehiculos.comandos`. **vehiculos decide** qué hace con eso (guardarlo, marcar la unidad, etc.) | F3 |
 | Consulta puntual | `GET /api/multas/{patente}` vía proxy, si hace falta | F1 |
 | Scraping a sitios externos | **No** pasa por el orquestador | — |
@@ -224,7 +234,8 @@ SOLICITADA ──► CONSULTANDO_MULTAS ──► (multas.eventos) ──► ACT
   - El alta de una unidad: el `POST /api/vehiculos` pasa por el orquestador y, si responde 201, se abre el flujo.
   - Un barrido periódico (ej. diario) de las unidades disponibles. El orquestador agenda el flujo; **qué unidades corresponde consultar lo responde vehiculos**, por ejemplo con `GET /vehiculos?disponible=true`.
   - Un pedido manual: `POST /api/orquestador/multas/{vehiculoId}`.
-- **El orquestador** decide la frecuencia, los reintentos y el backoff, y respeta un límite de concurrencia para no saturar al scraper ni a los sitios que scrapea.
+- **El orquestador** decide la frecuencia, los reintentos y el backoff, y respeta un límite de concurrencia para no saturar al scraper ni a los sitios que scrapea. Distingue los errores del scraper: `ErrorSitioNoDisponible` se reintenta con backoff; `ErrorEstructuraNoReconocida` (el sitio cambió) **no** se reintenta y se alerta; una patente sin multas es un resultado válido, no un error.
+- **Datos personales:** el resultado del scraper (actas, importes, lugares) es dato personal. El orquestador **no lo guarda**: solo registra estado, tiempos y la cantidad de actas, igual que el log del scraper. El detalle va a vehiculos.
 - **El scraper** decide cómo scrapear y cómo interpretar las deudas.
 - **vehiculos** decide qué significa tener multas.
 - **Requiere que vehiculos agregue el campo `patente`.** Es una migración de Flyway; la hace el responsable de vehiculos (Naim), según la regla de su repo.
@@ -266,7 +277,18 @@ SOLICITADA ──► CONSULTANDO_MULTAS ──► (multas.eventos) ──► ACT
 | `crm.eventos` | Todos los servicios | Solo el orquestador | Hechos (`PreformularioCompletado`, `LeadCalificado`, `ResumenGenerado`...). |
 | `crm.dlt` | Cualquiera | Monitoreo / orquestador | Mensajes que fallaron, de cualquier servicio. |
 
-La clave sigue siendo el `leadId`, así que se mantiene el orden por lead. El costo es que cada servicio lee órdenes ajenas y las descarta, algo insignificante con ~150 leads por día. Se prototipa en local (Kafka del compose, sin límite) y se aplica en Aiven en un cambio coordinado, porque los 5 tópicos viejos y los 3 nuevos no pueden convivir. Los cambios por repo están en [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md).
+Mapeo de lo que hay hoy (incluye los dos servicios nuevos):
+
+| Hoy | Pasa a |
+|---|---|
+| `preformulario-completado` (leads) | evento `PreformularioCompletado` en `crm.eventos` |
+| `lead-calificado` (calificacion) | evento `LeadCalificado` en `crm.eventos`; clientes y leads dejan de escucharlo y reciben comandos (`RegistrarCalificacion`, etc.) |
+| `resumen-solicitado` / `resumen-generado` | comando `GenerarResumen` en `crm.comandos` / evento `ResumenGenerado` en `crm.eventos` |
+| `cliente-actualizado`, `cliente-anonimizado` (clientes) | eventos `ClienteActualizado` y `ClienteAnonimizado` en `crm.eventos` |
+| comando de multas (nuevo) | `ConsultarMultas` en `crm.comandos` (`destino: multas`); respuesta `MultasConsultadas` en `crm.eventos` |
+| `preformulario-completado-dlt`, `lead-calificado.clientes.DLT` | `crm.dlt` |
+
+La clave sigue siendo el `leadId` (o el `clienteId` / `vehiculoId` según el flujo), así que se mantiene el orden por entidad. El costo es que cada servicio lee órdenes ajenas y las descarta, algo insignificante con ~150 leads por día. Se prototipa en local (Kafka del compose, sin límite) y se aplica en Aiven en un cambio coordinado, porque los 5 tópicos viejos y los 3 nuevos no pueden convivir. Los cambios por repo están en [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md).
 
 ### 5.3 Contrato de eventos que publica el orquestador
 
