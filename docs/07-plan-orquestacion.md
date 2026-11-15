@@ -137,11 +137,18 @@ ia-resumen ──ResumenGenerado──► crm.eventos ──► orquestador ─�
 - Los pasos de `GET /api/orquestador/flujos` exponen `intento`.
 - 26 tests nuevos con Postgres (241 en total) y 8 mutaciones manuales detectadas. De punta a punta con Kafka y Postgres reales (scraper real con la ANSV simulada y vehiculos falso): éxito, sitio caído con reintento, cambio de estructura sin reintento y patente sin multas.
 
-**InfraccionScrapper (rama `feat/servicio-kafka-multas`):** ya es el servicio `multas` (kafkajs 2.2.4, solo pnpm): atiende `ConsultarMultas`, responde `MultasConsultadas` / `ConsultaMultasFallida`, una consulta a la vez con pausa, DLT, `/health`, log sin datos personales. 43 tests y 10 mutaciones detectadas. Falta su `Dockerfile` (imagen de Playwright) y probarlo contra la ANSV real (`pnpm exec playwright install chromium`).
+**InfraccionScrapper (rama `feat/servicio-kafka-multas`):** ya es el servicio `multas` (kafkajs 2.2.4, solo pnpm): atiende `ConsultarMultas`, responde `MultasConsultadas` / `ConsultaMultasFallida`, una consulta a la vez con pausa, DLT, `/health` (puerto 8087), log sin datos personales. 43 tests y 10 mutaciones detectadas. Tiene `Dockerfile` (imagen de Playwright fijada por digest, usuario `pwuser`, Chromium sin sandbox dentro del contenedor; verificado que arranca). Falta probarlo contra la ANSV real (`pnpm exec playwright install chromium`).
 
-**Falta, en otros repos:**
+**VehiculosMicroservice (rama `feat/patente-y-multas`):** migración `V2__patente_y_multas.sql` (patente única y opcional, subtotal y fecha de multas, tabla `multa`), `patente` en el alta, el `PUT /vehiculos/{id}` y el detalle, `PUT` y `GET /vehiculos/{id}/multas` con la clave de servicio. 442 tests (2 errores previos de `FotoApiTest`, ajenos) y 8 mutaciones detectadas. **No aplicar la V2 a la base compartida sin el responsable.**
 
-- vehiculos (Naim): migración de `patente` y `PUT /vehiculos/{id}/multas` (qué hace con las multas lo decide vehiculos).
+**MonitorMicroservice (rama `feat/objetivo-multas`):** `multas` como objetivo (`MULTAS_SERVICE_URL`, `/health`).
+
+**De punta a punta con los tres servicios reales** (orquestador, scraper con la ANSV simulada y vehiculos real, sobre Kafka y un Postgres local descartable): el alta por el gateway abre sola la consulta; completa con multas y sin multas; el sitio caído se reintenta; el cambio de estructura queda FALLIDO sin reintentar; una unidad sin patente queda FALLIDA en el acto; vehiculos guarda el detalle y solo lo entrega con la clave.
+
+**Falta:**
+
+- Aplicar la `V2` de vehiculos a la base compartida (Naim) antes de desplegar; Naim decide además qué significa tener multas (marcar la unidad, afectar el precio...).
+- Variables en Render: `VEHICULOS_API_KEY`, `MULTAS_URL`, el servicio multas (`KAFKA_*`, imagen de unos 3,7 GB: ojo con la memoria del plan free) y `MULTAS_SERVICE_URL` en el monitor.
 - Activar `MULTAS_BARRIDO_HABILITADO`, `MULTAS_AL_ALTA` y definir `VEHICULOS_API_KEY` cuando vehiculos tenga `patente`.
 
 ## 5. Otros pendientes (fuera de A y B)

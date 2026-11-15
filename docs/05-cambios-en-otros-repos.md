@@ -124,7 +124,7 @@ El pase a Aiven (los 5 tópicos viejos y los 3 nuevos no pueden convivir) está 
 
 | Prioridad | Cambio | Para qué |
 |---|---|---|
-| ✅ | Objetivos **orquestador**, **ia-resumen** y **auth** (hecho, rama `feat/objetivos-orquestador-auth-ia`). Quedan clientes real (ya figura) y multas cuando exista. | El orquestador reporta `"status": "DOWN"` en su `/health` si la base o Kafka están caídos, y el monitor lo marca DOWN. |
+| ✅ | Objetivos **orquestador**, **ia-resumen** y **auth** (hecho, rama `feat/objetivos-orquestador-auth-ia`). Quedan clientes real (ya figura). `multas` ya está (rama `feat/objetivo-multas` del monitor). | El orquestador reporta `"status": "DOWN"` en su `/health` si la base o Kafka están caídos, y el monitor lo marca DOWN. |
 | ⚪ | Usar Postgres en vez de H2 en memoria (ya lo soporta por variables). | Hoy pierde el historial en cada reinicio. |
 
 **No cambiar:** el monitor tiene que seguir sondeando a cada servicio **directo**, no a través del orquestador.
