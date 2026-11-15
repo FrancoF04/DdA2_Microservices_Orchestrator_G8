@@ -228,14 +228,13 @@ Sin estas variables usa H2 en memoria y también funciona.
 ### DDA2 (front)
 
 ```dotenv
-VITE_LEADS_API_URL=http://localhost:8080/api
-VITE_VEHICULOS_API_URL=http://localhost:8080/api
-VITE_CALIFICACION_API_URL=http://localhost:8080/api
-VITE_CLIENTES_API_URL=http://localhost:8080/api
-VITE_MONITOR_API_URL=http://localhost:8080/api
+# Todo el front (leads, clientes, calificaciones, vehiculos y auth) pasa por el orquestador.
+VITE_API_URL=http://localhost:8080/api
+# Solo el Health Dashboard (/monitor) llama directo al servicio monitor.
+VITE_MONITOR_API_URL=http://localhost:8085
 ```
 
-El orquestador ya permite el origen `http://localhost:5173` en CORS. El sondeo de respaldo de la página Monitor no funciona con estas URLs (ver [03-despliegue-render.md §4](03-despliegue-render.md#nota-sondeo-de-respaldo-del-front)).
+La cola (`/cola`) pide login: usar `admin@example.com` / `admin-local-123` (el admin que crea AuthMicroservice con su seed). El orquestador ya permite el origen `http://localhost:5173` en CORS. El sondeo de respaldo de la página Monitor sigue yendo directo a los servicios (ver [03-despliegue-render.md §4](03-despliegue-render.md#nota-sondeo-de-respaldo-del-front)).
 
 ## 3. Probar el flujo completo
 
