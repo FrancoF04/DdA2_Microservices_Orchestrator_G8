@@ -58,6 +58,8 @@ services:
         sync: false           # X-Api-Key de escritura de vehiculos, para entregarle el resultado de las multas
       - key: MULTAS_BARRIDO_HABILITADO
         value: "false"
+      - key: MULTAS_AL_ALTA
+        value: "false"
 
       # --- base de datos (Supabase, session pooler 5432) ---
       - key: DATABASE_URL

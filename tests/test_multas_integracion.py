@@ -543,3 +543,102 @@ async def test_la_purga_borra_lo_resuelto_y_viejo_pero_no_lo_pendiente_ni_lo_rec
     async with db.obtener_sessionmaker()() as s:
         claves = set((await s.execute(select(EventoProcesado.clave).where(EventoProcesado.clave.like("test-%")))).scalars())
     assert f"test-reciente-{unidad}" in claves and f"test-viejo-{unidad}" not in claves
+
+
+# ------------------------------------------------------------------ alta de una unidad por el proxy
+
+
+def _gateway(settings: Settings, estado: int, location: Optional[str]) -> Any:
+    """La app con un vehiculos simulado que responde al `POST /vehiculos`."""
+
+    def manejar(request: httpx.Request) -> httpx.Response:
+        cabeceras = {"Location": location} if location else {}
+        return httpx.Response(estado, json={"id": "x"}, headers=cabeceras)
+
+    app = crear_app(settings)  # sin lifespan: la base ya la abrió la fixture
+    app.state.http = ClientesHttp(httpx.MockTransport(manejar))
+    return app
+
+
+async def _alta(app: Any, ruta: str = "/api/vehiculos", metodo: str = "POST") -> httpx.Response:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://orq") as cliente:
+        return await cliente.request(metodo, ruta, json={"marca": "Toyota"})
+
+
+async def _esperar_flujo(unidad: str, segundos: float = 3.0) -> bool:
+    import asyncio
+
+    fin = asyncio.get_event_loop().time() + segundos
+    while asyncio.get_event_loop().time() < fin:
+        if await _hay_flujo(unidad):
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+async def test_el_alta_de_una_unidad_abre_la_consulta_de_multas_si_esta_activado(base: Settings) -> None:
+    unidad = str(uuid.uuid4())
+    cfg = base.model_copy(update={"multas_al_alta": True})
+    try:
+        respuesta = await _alta(_gateway(cfg, 201, f"http://vehiculos.test/vehiculos/{unidad}"))
+
+        assert respuesta.status_code == 201  # la respuesta al cliente no cambia
+        assert await _esperar_flujo(unidad)
+        flujo = await _flujo(unidad)
+        assert flujo.tipo == multas.TIPO and flujo.estado == multas.CONSULTANDO_MULTAS
+        fila, = await _outbox(unidad)
+        assert fila.mensaje["eventType"] == "ConsultarMultas"
+    finally:
+        async with db.obtener_sessionmaker()() as s, s.begin():
+            await s.execute(delete(Outbox).where(Outbox.clave == unidad))
+            await s.execute(delete(Flujo).where(Flujo.clave_negocio == unidad))
+
+
+async def test_con_el_alta_desactivada_no_se_abre_nada(base: Settings) -> None:
+    unidad = str(uuid.uuid4())
+    assert base.multas_al_alta is False
+    respuesta = await _alta(_gateway(base, 201, f"http://vehiculos.test/vehiculos/{unidad}"))
+
+    assert respuesta.status_code == 201
+    assert not await _esperar_flujo(unidad, segundos=0.5)
+
+
+@pytest.mark.parametrize(
+    "estado, metodo, ruta, location",
+    [
+        (422, "POST", "/api/vehiculos", "http://vehiculos.test/vehiculos/{u}"),  # el alta falló
+        (200, "PUT", "/api/vehiculos/{u}", None),  # no es un alta
+        (201, "POST", "/api/vehiculos/{u}/foto", "http://vehiculos.test/vehiculos/{u}"),  # no es el alta de una unidad
+        (201, "POST", "/api/vehiculos", None),  # sin Location no hay id
+        (201, "POST", "/api/vehiculos", "http://vehiculos.test/vehiculos/no-es-un-uuid"),
+    ],
+)
+async def test_solo_el_alta_exitosa_de_una_unidad_abre_la_consulta(
+    base: Settings, estado: int, metodo: str, ruta: str, location: Optional[str]
+) -> None:
+    unidad = str(uuid.uuid4())
+    cfg = base.model_copy(update={"multas_al_alta": True})
+    ruta = ruta.format(u=unidad)
+    location = location.format(u=unidad) if location else None
+
+    await _alta(_gateway(cfg, estado, location), ruta, metodo)
+
+    assert not await _esperar_flujo(unidad, segundos=0.5)
+
+
+async def test_si_ya_hay_una_consulta_en_curso_el_alta_no_abre_otra_ni_falla(base: Settings) -> None:
+    unidad = str(uuid.uuid4())
+    cfg = base.model_copy(update={"multas_al_alta": True})
+    try:
+        await _abrir(cfg, unidad)
+        respuesta = await _alta(_gateway(cfg, 201, f"http://vehiculos.test/vehiculos/{unidad}"))
+
+        assert respuesta.status_code == 201
+        import asyncio
+
+        await asyncio.sleep(0.3)
+        assert len(await _outbox(unidad)) == 1
+    finally:
+        async with db.obtener_sessionmaker()() as s, s.begin():
+            await s.execute(delete(Outbox).where(Outbox.clave == unidad))
+            await s.execute(delete(Flujo).where(Flujo.clave_negocio == unidad))

@@ -132,7 +132,7 @@ ia-resumen ──ResumenGenerado──► crm.eventos ──► orquestador ─�
 **Orquestador (rama `feature/flujo-multas-y-purga-outbox`):**
 
 - Flujo `CONSULTA_MULTAS_VEHICULO` completo: `ConsultarMultas` por Kafka, reintentos con espera creciente, entrega del resultado a vehiculos por `PUT /vehiculos/{id}/multas` desde el outbox, vencimiento y recuperación. Contrato en docs/08 §7.
-- `POST /api/orquestador/multas/{vehiculoId}` y barrido periódico (apagado por defecto).
+- `POST /api/orquestador/multas/{vehiculoId}`, barrido periódico y apertura al alta de una unidad (`MULTAS_AL_ALTA`, usa el `Location` de la respuesta 201); ambos apagados por defecto.
 - Purga horaria del outbox resuelto y de `evento_procesado` (`RETENCION_HISTORIAL_DIAS`, 30).
 - Los pasos de `GET /api/orquestador/flujos` exponen `intento`.
 - 26 tests nuevos con Postgres (241 en total) y 8 mutaciones manuales detectadas. De punta a punta con Kafka y Postgres reales (scraper real con la ANSV simulada y vehiculos falso): éxito, sitio caído con reintento, cambio de estructura sin reintento y patente sin multas.
@@ -142,8 +142,7 @@ ia-resumen ──ResumenGenerado──► crm.eventos ──► orquestador ─�
 **Falta, en otros repos:**
 
 - vehiculos (Naim): migración de `patente` y `PUT /vehiculos/{id}/multas` (qué hace con las multas lo decide vehiculos).
-- Que el alta de una unidad abra la consulta sola (hoy la toma el barrido): requiere leer el cuerpo de la respuesta del proxy.
-- Activar `MULTAS_BARRIDO_HABILITADO` y definir `VEHICULOS_API_KEY` cuando vehiculos tenga `patente`.
+- Activar `MULTAS_BARRIDO_HABILITADO`, `MULTAS_AL_ALTA` y definir `VEHICULOS_API_KEY` cuando vehiculos tenga `patente`.
 
 ## 5. Otros pendientes (fuera de A y B)
 

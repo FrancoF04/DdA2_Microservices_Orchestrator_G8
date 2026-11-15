@@ -90,6 +90,8 @@ class Settings(BaseSettings):
     multas_espera_base_segundos: float = 60.0
     # Barrido periódico de las unidades disponibles (apagado hasta que vehiculos tenga `patente`).
     multas_barrido_habilitado: bool = False
+    # Que el alta de una unidad (POST /api/vehiculos que responde 201) abra su consulta de multas.
+    multas_al_alta: bool = False
     multas_barrido_intervalo_segundos: float = 86400.0
     # Tope de consultas que abre un barrido, para no saturar al scraper ni a los sitios que consulta.
     multas_barrido_maximo: int = 50

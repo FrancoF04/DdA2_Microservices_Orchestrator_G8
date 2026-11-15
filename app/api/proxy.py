@@ -6,6 +6,8 @@ from fastapi import APIRouter, Request
 from starlette.responses import Response
 
 from app.errores import problem_response
+from app.flujos.consulta_multas import abrir_si_fue_un_alta
+from app.middleware.correlation_id import correlation_id_actual
 from app.proxy.reenvio import reenviar
 from app.proxy.rutas import RECURSOS, resolver_destino
 from app.seguridad.autenticador import Autenticador
@@ -44,7 +46,7 @@ async def _proxy(request: Request, recurso: str) -> Response:
         if operador is not None and operador.jti and operador.expira is not None:
             await autenticador.revocaciones.revocar(operador.jti, operador.expira)
 
-    return await reenviar(
+    respuesta = await reenviar(
         request,
         destino,
         ruta,
@@ -53,6 +55,13 @@ async def _proxy(request: Request, recurso: str) -> Response:
         settings,
         identidad,
     )
+    # El alta de una unidad abre la consulta de sus multas (sin esperar: la respuesta al cliente no depende de eso).
+    if recurso == "vehiculos":
+        abrir_si_fue_un_alta(
+            settings, request.method.upper(), ruta, respuesta.status_code, respuesta.headers.get("location"),
+            correlation_id_actual(),
+        )
+    return respuesta
 
 
 @router.api_route("/api/{recurso}", methods=_METODOS, include_in_schema=False)

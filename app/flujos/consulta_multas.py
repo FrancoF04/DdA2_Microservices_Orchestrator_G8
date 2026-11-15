@@ -107,3 +107,39 @@ async def barrer_periodicamente(settings: Settings, http: ClientesHttp) -> None:
         except Exception as exc:  # noqa: BLE001 - la tarea no puede morir por un error puntual
             logger.warning("No se pudo hacer el barrido de multas: %s", exc)
         await asyncio.sleep(settings.multas_barrido_intervalo_segundos)
+
+
+# ------------------------------------------------------------------ alta de una unidad
+
+_tareas_de_alta: set[asyncio.Task] = set()
+
+
+async def _abrir_por_alta(settings: Settings, location: Optional[str], correlation_id: Optional[str]) -> None:
+    """Abre la consulta de la unidad recién creada. Nunca falla: el alta ya se hizo y la respuesta ya salió."""
+    try:
+        vehiculo_id = str(uuid.UUID((location or "").rstrip("/").rsplit("/", 1)[-1]))
+    except ValueError:
+        logger.warning("El alta de una unidad respondió 201 sin un Location con su id: no se abre la consulta de multas.")
+        return
+    sessionmaker = obtener_sessionmaker()
+    if sessionmaker is None:
+        return
+    try:
+        async with sessionmaker() as session, session.begin():
+            await abrir_consulta(session, settings, vehiculo_id, correlation_id)
+        logger.info("Alta de la unidad %s: se abrió la consulta de multas.", vehiculo_id)
+    except multas.ConsultaEnCurso:
+        pass
+    except Exception as exc:  # noqa: BLE001 - es un efecto secundario del alta: el barrido lo retoma
+        logger.warning("No se pudo abrir la consulta de multas de la unidad %s: %s", vehiculo_id, exc)
+
+
+def abrir_si_fue_un_alta(
+    settings: Settings, metodo: str, ruta: str, codigo: int, location: Optional[str], correlation_id: Optional[str]
+) -> None:
+    """Si lo que pasó por el proxy fue el alta de una unidad (`POST /vehiculos` → 201), abre su consulta en segundo plano."""
+    if not settings.multas_al_alta or metodo != "POST" or ruta.rstrip("/") != "/vehiculos" or codigo != 201:
+        return
+    tarea = asyncio.create_task(_abrir_por_alta(settings, location, correlation_id))
+    _tareas_de_alta.add(tarea)  # referencia fuerte hasta que termine
+    tarea.add_done_callback(_tareas_de_alta.discard)

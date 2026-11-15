@@ -94,7 +94,7 @@ orquestador ──PUT /vehiculos/{id}/multas (REST, desde el outbox)──► ve
 
 Estados: `CONSULTANDO_MULTAS` → `ACTUALIZANDO_VEHICULO` → `COMPLETADO`, o `FALLIDO` / `EXPIRADO`.
 
-- **Quién abre una consulta:** `POST /api/orquestador/multas/{vehiculoId}` (202; 409 `CONSULTA_EN_CURSO` si ya hay una esperando) y el barrido periódico (`MULTAS_BARRIDO_HABILITADO`, apagado por defecto: pide a vehiculos `GET /vehiculos?disponible=true` y abre una consulta por unidad, hasta `MULTAS_BARRIDO_MAXIMO`). El alta de una unidad todavía no abre la consulta sola: la toma el próximo barrido.
+- **Quién abre una consulta:** `POST /api/orquestador/multas/{vehiculoId}` (202; 409 `CONSULTA_EN_CURSO` si ya hay una esperando) y el barrido periódico (`MULTAS_BARRIDO_HABILITADO`, apagado por defecto: pide a vehiculos `GET /vehiculos?disponible=true` y abre una consulta por unidad, hasta `MULTAS_BARRIDO_MAXIMO`). Con `MULTAS_AL_ALTA=true`, el alta de una unidad (`POST /api/vehiculos` que responde 201 con `Location`) abre su consulta en segundo plano, sin afectar la respuesta al cliente; si no, la toma el próximo barrido.
 - **`ConsultaMultasFallida` reintentable:** el orquestador vuelve a pedir `ConsultarMultas` con espera `MULTAS_ESPERA_BASE_SEGUNDOS * 2^(reintento-1)` hasta `MULTAS_MAX_INTENTOS` consultas; después el flujo queda `FALLIDO`. Si no es reintentable (`ESTRUCTURA_NO_RECONOCIDA`: el sitio cambió) queda `FALLIDO` de una vez y hay que alertar.
 - **`ConsultarMultas` en `crm.dlt`:** el flujo queda `FALLIDO`.
 - **Sin respuesta** en `FLUJO_TIMEOUT_MULTAS_SEGUNDOS`: `EXPIRADO`; si la respuesta llega tarde, el flujo se recupera.
