@@ -38,6 +38,13 @@ services:
       - key: PROXY_TIMEOUT_SEGUNDOS
         value: "60"
 
+      # --- autenticación (docs/06-autenticacion.md) ---
+      # Sin JWT_SECRET el orquestador no arranca (a propósito: no puede quedar abierto).
+      - key: JWT_SECRET
+        sync: false           # el mismo que JWT_SECRET de AuthMicroservice
+      - key: CLAVES_SERVICIO
+        sync: false           # leads=<clave>,calificacion=<clave>,ia-resumen=<clave> (32+ caracteres c/u)
+
       # --- base de datos (Supabase, session pooler 5432) ---
       - key: DATABASE_URL
         sync: false
