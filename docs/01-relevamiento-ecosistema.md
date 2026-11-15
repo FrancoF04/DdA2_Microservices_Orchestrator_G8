@@ -259,7 +259,7 @@ Python 3.12 + FastAPI + SQLAlchemy, schema `auth` (tablas `usuarios`, `refresh_t
 - **Roles:** `ADMIN`, `ASESOR`, `COMERCIAL`, `TELEMARKETING`.
 - **Quién valida el token:** el orquestador, localmente (los demás servicios no validan JWT).
 - **Corregido al integrarlo (2026-11-15):** `/auth/refresh` no chequeaba que el usuario siguiera activo; `JWT_SECRET` vacío no se validaba; faltaba el claim `email`; el puerto chocaba con leads / ia-resumen; las dependencias no estaban fijadas.
-- **Pendiente:** el login no limita los intentos (fuerza bruta). Ver [06 §8](06-autenticacion.md).
+- **Límite de intentos (2026-11-15):** tras 5 fallos seguidos del mismo email, el login responde `429` con `Retry-After` y hay que esperar 5 minutos. Ver [06 §2](06-autenticacion.md).
 
 ### 3.9 scraper de multas (repo `InfraccionScrapper`)
 

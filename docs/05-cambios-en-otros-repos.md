@@ -159,7 +159,7 @@ Ya existe y está integrado (ver [06-autenticacion.md](06-autenticacion.md)). Lo
 
 | Prioridad | Cambio | Para qué |
 |---|---|---|
-| 🟡 | **Limitar los intentos de login** (por IP y por email) y devolver `429`. | Hoy se puede probar contraseñas sin freno. |
+| ✅ Hecho (PR pendiente) | **Límite de intentos de login** por email: 5 fallos seguidos → `429` con `Retry-After` durante 5 minutos (configurable con `LOGIN_*`). Pendiente, si hiciera falta: que sobreviva a reinicios y a varias réplicas (hoy vive en memoria). | Frena la fuerza bruta contra una cuenta. |
 | 🟡 | Detectar el **reuso de un refresh token** y cerrar toda la sesión del usuario. | Un refresh robado y usado tras la rotación no se nota. |
 | 🟡 | `Dockerfile` con usuario no root, versión de la imagen fijada con digest y `HEALTHCHECK` contra `/health`; `/health` que verifique la base. | Es el único servicio Python sin esto; para el pase a la nube. |
 | 🟡 | Agregar auth como objetivo del **monitor** (`/health`). | Hoy no lo vigila. |

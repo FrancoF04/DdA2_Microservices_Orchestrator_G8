@@ -115,6 +115,17 @@ def test_login_refresh_y_logout_no_piden_token(gw, servicios, ruta):
     assert servicios.recibidas[-1].url.path == ruta.removeprefix("/api")
 
 
+def test_el_429_del_login_llega_al_front_con_su_retry_after_legible(gw, servicios):
+    """Auth limita los intentos de login: el front tiene que poder leer cuánto falta."""
+    servicios.responder = lambda r: httpx.Response(
+        429, json={"detail": "Demasiados intentos fallidos."}, headers={"Retry-After": "300"}
+    )
+    r = gw.post("/api/auth/login", json={}, headers={"Origin": ORIGEN_FRONT})
+    assert r.status_code == 429
+    assert r.headers["retry-after"] == "300"
+    assert "retry-after" in r.headers["access-control-expose-headers"].lower()
+
+
 def test_el_preflight_de_cors_no_pide_token(gw):
     r = gw.options(
         "/api/leads",

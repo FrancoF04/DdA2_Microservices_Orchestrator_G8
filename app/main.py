@@ -84,7 +84,8 @@ def crear_app(
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=[CORRELATION_HEADER, "Location", "ETag"],
+        # Retry-After: el front lo lee para decir cuánto falta cuando el login responde 429.
+        expose_headers=[CORRELATION_HEADER, "Location", "ETag", "Retry-After"],
     )
     # Último en agregarse = el más externo: el correlation id envuelve todo.
     app.add_middleware(CorrelationIdMiddleware)

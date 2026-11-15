@@ -27,7 +27,7 @@ Cómo se controla el acceso al ecosistema. Todo pasa por el orquestador (el API 
 
 | Paso | Qué pasa |
 |---|---|
-| **Login** `POST /api/auth/login` | Email y contraseña → `access_token` (JWT, **15 minutos**) y `refresh_token` (opaco, 7 días). |
+| **Login** `POST /api/auth/login` | Email y contraseña → `access_token` (JWT, **15 minutos**) y `refresh_token` (opaco, 7 días). Tras **5 fallos seguidos** del mismo email responde `429` con el header `Retry-After` (300 s) y hay que esperar **5 minutos** antes de volver a probar; durante ese tiempo ni la contraseña correcta entra. Un login correcto borra los fallos. El front puede leer `Retry-After` (el orquestador lo expone en CORS). |
 | **Cada pedido** | `Authorization: Bearer <access_token>`. El orquestador verifica firma, vencimiento y que no esté revocado. |
 | **Vence el access token** | El orquestador responde `401` con `codigo: TOKEN_EXPIRADO`. El front llama a `POST /api/auth/refresh` con el refresh token, recibe un par nuevo y repite el pedido. El operador no se entera. |
 | **Refresh** `POST /api/auth/refresh` | Rota el refresh token (el viejo deja de servir). Falla si el usuario fue desactivado. |
@@ -45,6 +45,8 @@ Códigos de error del gateway (siempre en `application/problem+json`, con `WWW-A
 | `TOKEN_REVOCADO` | 401 | La sesión se cerró con logout. |
 | `CLAVE_SERVICIO_INVALIDA` | 401 | Credencial de servicio equivocada o servicio desconocido. |
 | `SERVICIO_NO_AUTORIZADO` | 403 | El servicio es válido pero no puede llamar a ese recurso. |
+
+El `429` del login lo responde auth (con su propio cuerpo `{"detail": "..."}`); el orquestador lo deja pasar tal cual, con `Retry-After`.
 
 ## 3. Qué es público y qué está protegido
 
@@ -117,7 +119,7 @@ Con auth, orquestador, clientes, vehiculos, calificacion, leads e ia-resumen nat
 - Un telemarketer ve la cola pero auth le niega `/auth/usuarios` (403). Al desactivarlo: no puede renovar ni volver a loguearse.
 - Credencial equivocada, servicio sin permiso, origen declarado sin clave: 401 / 403 / 401.
 
-Tests: 163 en el orquestador (más de 100 son de autenticación, incluida una persistencia contra Postgres), 22 en auth, 19 en calificacion.
+Tests: 163 en el orquestador (más de 100 son de autenticación, incluida una persistencia contra Postgres), 42 en auth, 19 en calificacion.
 
 ## 8. Límites conocidos
 
@@ -126,7 +128,7 @@ Tests: 163 en el orquestador (más de 100 son de autenticación, incluida una pe
 | **Usuario desactivado** | Pierde el refresh y el login en el acto, pero su access token ya emitido vale hasta 15 minutos. | Aceptarlo, o que el orquestador revoque por `sub` cuando ve el `PATCH /api/auth/usuarios/{id}`. |
 | **Revocaciones con varias réplicas** | Cada réplica conoce los logouts que pasaron por ella hasta reiniciar. | Consultar la tabla en cada pedido o un caché compartido. Con una réplica no pasa. |
 | **Secreto compartido (HS256)** | Quien conozca `JWT_SECRET` puede firmar tokens: hay que tratarlo como secreto en Render y rotarlo si se filtra. | JWT asimétrico (RS256): auth firma con la privada y el orquestador solo necesita la pública. |
-| **Login sin límite de intentos** | auth no frena la fuerza bruta contra una cuenta. | Rate limit por IP / usuario (en auth o en el orquestador). |
+| **Límite de intentos de login** | Se cuenta por email, en la memoria de auth: con varias réplicas cada una cuenta por su lado, y un reinicio lo borra. Además, alguien que sepa el email de otro puede bloquearlo 5 minutos a propósito. | Guardar los contadores en la base o en un caché compartido. |
 | **Refresh token robado** | Se rota en cada uso, pero reusar uno viejo no cierra toda la sesión. | Detección de reuso. |
 | **Todos los operadores pueden todo** | Hoy cualquier operador logueado accede a `/api/monitor` y `/api/orquestador`. | Reglas por rol (`X-Usuario-Rol` ya llega). |
 | **Se cae auth** | Los operadores con sesión siguen; fallan login y refresh. El logout igual se aplica en el orquestador. | — |
