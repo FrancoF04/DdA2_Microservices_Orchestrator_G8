@@ -68,6 +68,9 @@ AUTH_URL=http://127.0.0.1:8086
 JWT_SECRET=local-jwt-secret-solo-desarrollo-0123456789abcdef
 CLAVES_SERVICIO=leads=clave-gateway-leads-local-0000000000001,calificacion=clave-gateway-calificacion-local-00000001,ia-resumen=clave-gateway-ia-resumen-local-0000000001
 # Para trabajar sin login (solo desarrollo): AUTH_HABILITADA=false
+# Tanda A: true = el orquestador publica resumen-solicitado (y leads con LEADS_PUBLICA_RESUMEN=false).
+# Por defecto false: leads sigue publicándolo y el orquestador solo observa.
+ORQUESTADOR_PUBLICA_RESUMEN=false
 ```
 
 ```bash
@@ -92,6 +95,8 @@ CLIENTES_CLAVE_LEADS=solo-local-clave-de-servicio-leads-0001
 ORQUESTADOR_CLAVE_SERVICIO=clave-gateway-leads-local-0000000000001
 KAFKA_ENABLED=true
 KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
+# true (por defecto): leads publica resumen-solicitado. false: lo publica el orquestador.
+LEADS_PUBLICA_RESUMEN=true
 ```
 
 ```bash

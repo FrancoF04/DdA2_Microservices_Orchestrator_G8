@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -14,6 +14,8 @@ from sqlalchemy.orm import selectinload
 from app.db.models import Flujo
 from app.db.session import obtener_sessionmaker
 from app.errores import ErrorOrquestador
+from app.flujos import registro_lead as rl
+from app.flujos.despachador import EVENTO_RESUMEN_SOLICITADO, ComandoSaliente, encolar
 from app.seguridad.dependencias import requiere_operador
 
 router = APIRouter(
@@ -113,3 +115,43 @@ async def obtener_flujo(flujo_id: uuid.UUID) -> FlujoResponse:
     if flujo is None:
         raise ErrorOrquestador(404, "FLUJO_NO_ENCONTRADO", "No existe un flujo con ese id.")
     return _a_respuesta(flujo)
+
+
+@router.post(
+    "/{flujo_id}/reintentar",
+    response_model=FlujoResponse,
+    status_code=202,
+    summary="Volver a pedir el resumen de un lead",
+    description=(
+        "Para un flujo `REGISTRO_LEAD` ya calificado que no terminó (EXPIRADO, FALLIDO o esperando el "
+        "resumen): deja el flujo en CALIFICADO y encola de nuevo `resumen-solicitado`. Lo publica el "
+        "despachador en unos segundos. Es idempotente: leads guarda el último resumen que le llega."
+    ),
+)
+async def reintentar_flujo(flujo_id: uuid.UUID, request: Request) -> FlujoResponse:
+    settings = request.app.state.settings
+    if not settings.orquestador_publica_resumen:
+        raise ErrorOrquestador(
+            409,
+            "DESPACHADOR_APAGADO",
+            "El orquestador no está publicando resumen-solicitado (ORQUESTADOR_PUBLICA_RESUMEN=false).",
+        )
+    async with _sessionmaker()() as session, session.begin():
+        flujo = (
+            await session.execute(
+                select(Flujo).where(Flujo.id == flujo_id).options(selectinload(Flujo.pasos)).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if flujo is None:
+            raise ErrorOrquestador(404, "FLUJO_NO_ENCONTRADO", "No existe un flujo con ese id.")
+        if flujo.tipo != rl.TIPO:
+            raise ErrorOrquestador(409, "FLUJO_NO_REINTENTABLE", f"Los flujos {flujo.tipo} no se reintentan.")
+        try:
+            rl.preparar_reintento(flujo, datetime.now(timezone.utc), settings)
+        except rl.ReintentoNoPermitido as exc:
+            raise ErrorOrquestador(409, exc.codigo, exc.mensaje) from None
+        await encolar(session, flujo, ComandoSaliente(settings.kafka_topico_resumen_solicitado, EVENTO_RESUMEN_SOLICITADO))
+        await session.flush()
+        # `actualizado_en` lo recalcula la base al actualizar: se vuelve a leer antes de armar la respuesta.
+        await session.refresh(flujo, attribute_names=["actualizado_en"])
+        return _a_respuesta(flujo)

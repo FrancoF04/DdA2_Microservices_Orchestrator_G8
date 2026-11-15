@@ -26,6 +26,7 @@ from app.config import Settings
 from app.db.models import EventoProcesado, Flujo
 from app.db.session import obtener_sessionmaker
 from app.flujos import registro_lead as rl
+from app.flujos.despachador import EVENTO_RESUMEN_SOLICITADO, ComandoSaliente, encolar
 from app.kafka.cliente import MANEJADORES
 from app.kafka.eventos import extraer_payload
 
@@ -48,7 +49,7 @@ def _clave_evento(mensaje: dict[str, Any], record: Any) -> str:
 
 
 async def procesar_evento(
-    aplicar: Callable[[Flujo, datetime, str, dict[str, Any]], None],
+    aplicar: Callable[[Flujo, datetime, str, dict[str, Any]], Optional[ComandoSaliente]],
     mensaje: dict[str, Any],
     record: Any,
 ) -> None:
@@ -101,7 +102,10 @@ async def procesar_evento(
             flujo.correlation_id = mensaje["correlationId"]
 
         estado_antes = flujo.estado
-        aplicar(flujo, momento, clave, payload)
+        comando = aplicar(flujo, momento, clave, payload)
+        if comando is not None:
+            # En la misma transacción que avanza el flujo: o se guardan los dos o ninguno.
+            await encolar(session, flujo, comando)
         logger.info(
             "Flujo %s lead=%s: %s → %s (%s)",
             rl.TIPO, lead_id, estado_antes, flujo.estado, record.topic,
@@ -112,10 +116,18 @@ def registrar_manejadores(settings: Settings) -> None:
     """Le dice al cliente de Kafka qué tópicos escuchar y qué hacer con cada uno."""
 
     def con(fn: Callable[..., None]) -> Callable[[Flujo, datetime, str, dict[str, Any]], None]:
-        return lambda flujo, momento, ref, payload: fn(flujo, momento, ref, settings)
+        def aplicar(flujo: Flujo, momento: datetime, ref: str, payload: dict[str, Any]) -> None:
+            fn(flujo, momento, ref, settings)
 
-    def lead_calificado(flujo: Flujo, momento: datetime, ref: str, payload: dict[str, Any]) -> None:
-        rl.al_lead_calificado(flujo, momento, ref, payload.get("origen"), settings)
+        return aplicar
+
+    def lead_calificado(
+        flujo: Flujo, momento: datetime, ref: str, payload: dict[str, Any]
+    ) -> Optional[ComandoSaliente]:
+        hay_que_pedir_resumen = rl.al_lead_calificado(flujo, momento, ref, payload.get("origen"), settings)
+        if hay_que_pedir_resumen and settings.orquestador_publica_resumen:
+            return ComandoSaliente(settings.kafka_topico_resumen_solicitado, EVENTO_RESUMEN_SOLICITADO)
+        return None
 
     acciones = {
         settings.kafka_topico_preformulario_completado: con(rl.al_preformulario_completado),

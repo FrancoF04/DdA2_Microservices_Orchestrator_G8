@@ -137,15 +137,29 @@ class TokenRevocado(Base):
 
 
 class Outbox(Base):
-    """Comandos pendientes de publicar en Kafka (publicación confiable, fase 2)."""
+    """Comandos pendientes de publicar en Kafka (publicación confiable).
+
+    `mensaje` guarda solo a qué lead se refiere el comando; los datos del payload se
+    consultan a leads al publicar, así no se copian datos de negocio acá.
+    Un comando pendiente tiene `publicado_en` y `abandonado_en` en NULL.
+    """
 
     __tablename__ = "outbox"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    flujo_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("flujo.id", ondelete="CASCADE"), index=True
+    )
     topic: Mapped[str] = mapped_column(Text, nullable=False)
     clave: Mapped[str] = mapped_column(Text, nullable=False)
     mensaje: Mapped[dict] = mapped_column(JSONB, nullable=False)
     creado_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    intentos: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    ultimo_error: Mapped[Optional[str]] = mapped_column(Text)
+    proximo_intento_en: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
     publicado_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
+    abandonado_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
