@@ -125,7 +125,25 @@ ia-resumen ──ResumenGenerado──► crm.eventos ──► orquestador ─�
 
 - Prueba de punta a punta con los cinco servicios reales y ia-resumen con su clave del LLM.
 - Los payloads de `GuardarResumen` incluyen el texto del resumen (puede nombrar al cliente): está en el outbox solo hasta publicarse; si se quisiera evitar, guardar solo el `leadId` y pedir el resumen a leads.
-- Después de B: flujo de multas (`ConsultarMultas` hacia el scraper `InfraccionScrapper`, nombre del servicio `multas`, responde por Kafka; vehiculos necesita `patente`; el scraper usa solo pnpm).
+- Después de B: flujo de multas (ver §4.1).
+
+### 4.1 Tanda C: flujo de multas y purga del outbox
+
+**Orquestador (rama `feature/flujo-multas-y-purga-outbox`):**
+
+- Flujo `CONSULTA_MULTAS_VEHICULO` completo: `ConsultarMultas` por Kafka, reintentos con espera creciente, entrega del resultado a vehiculos por `PUT /vehiculos/{id}/multas` desde el outbox, vencimiento y recuperación. Contrato en docs/08 §7.
+- `POST /api/orquestador/multas/{vehiculoId}` y barrido periódico (apagado por defecto).
+- Purga horaria del outbox resuelto y de `evento_procesado` (`RETENCION_HISTORIAL_DIAS`, 30).
+- Los pasos de `GET /api/orquestador/flujos` exponen `intento`.
+- 26 tests nuevos con Postgres (241 en total) y 8 mutaciones manuales detectadas. De punta a punta con Kafka y Postgres reales (scraper real con la ANSV simulada y vehiculos falso): éxito, sitio caído con reintento, cambio de estructura sin reintento y patente sin multas.
+
+**InfraccionScrapper (rama `feat/servicio-kafka-multas`):** ya es el servicio `multas` (kafkajs 2.2.4, solo pnpm): atiende `ConsultarMultas`, responde `MultasConsultadas` / `ConsultaMultasFallida`, una consulta a la vez con pausa, DLT, `/health`, log sin datos personales. 43 tests y 10 mutaciones detectadas. Falta su `Dockerfile` (imagen de Playwright) y probarlo contra la ANSV real (`pnpm exec playwright install chromium`).
+
+**Falta, en otros repos:**
+
+- vehiculos (Naim): migración de `patente` y `PUT /vehiculos/{id}/multas` (qué hace con las multas lo decide vehiculos).
+- Que el alta de una unidad abra la consulta sola (hoy la toma el barrido): requiere leer el cuerpo de la respuesta del proxy.
+- Activar `MULTAS_BARRIDO_HABILITADO` y definir `VEHICULOS_API_KEY` cuando vehiculos tenga `patente`.
 
 ## 5. Otros pendientes (fuera de A y B)
 

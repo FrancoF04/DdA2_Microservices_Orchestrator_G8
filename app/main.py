@@ -17,7 +17,7 @@ from app.api import flujos, health, proxy, servicios
 from app.auditoria import RegistroAuditoria
 from app.config import Settings, get_settings
 from app.db.session import cerrar_db, db_configurada, iniciar_db
-from app.flujos import despachador
+from app.flujos import consulta_multas, despachador
 from app.flujos import servicio as servicio_flujos
 from app.errores import registrar_manejadores
 from app.kafka.cliente import ClienteKafka
@@ -59,6 +59,9 @@ def crear_app(
             tareas.append(
                 asyncio.create_task(despachador.despachar_periodicamente(settings, app.state.kafka, app.state.http))
             )
+            tareas.append(asyncio.create_task(despachador.purgar_periodicamente(settings)))
+            if settings.multas_barrido_habilitado:
+                tareas.append(asyncio.create_task(consulta_multas.barrer_periodicamente(settings, app.state.http)))
         await app.state.kafka.iniciar()
         try:
             yield
@@ -100,6 +103,7 @@ def crear_app(
     # Las rutas propias van antes que el proxy: /api/orquestador/** no se reenvía.
     app.include_router(servicios.router)
     app.include_router(flujos.router)
+    app.include_router(flujos.router_multas)
     app.include_router(proxy.router)
     return app
 

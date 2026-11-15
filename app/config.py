@@ -77,6 +77,24 @@ class Settings(BaseSettings):
     # Cada cuánto se buscan flujos vencidos.
     flujo_intervalo_vencimiento_segundos: float = 15.0
     auditoria_retencion_dias: int = 7
+    # Cuánto se conservan las filas ya resueltas del outbox (publicadas o abandonadas; sin payload, solo
+    # ids y estado) y los eventos ya procesados (idempotencia). Tiene que superar la retención de Kafka.
+    retencion_historial_dias: int = 30
+
+    # --- flujo CONSULTA_MULTAS_VEHICULO (docs/02 §4.9) ---
+    # Plazo del scraper para responder (y de vehiculos para recibir el resultado).
+    flujo_timeout_multas_segundos: int = 300
+    # Consultas por vehículo antes de dejar el flujo FALLIDO (solo errores reintentables del scraper) y
+    # espera entre ellas: base * 2^(reintento-1).
+    multas_max_intentos: int = 3
+    multas_espera_base_segundos: float = 60.0
+    # Barrido periódico de las unidades disponibles (apagado hasta que vehiculos tenga `patente`).
+    multas_barrido_habilitado: bool = False
+    multas_barrido_intervalo_segundos: float = 86400.0
+    # Tope de consultas que abre un barrido, para no saturar al scraper ni a los sitios que consulta.
+    multas_barrido_maximo: int = 50
+    # Clave de escritura de vehiculos (X-Api-Key) para entregarle el resultado de las multas.
+    vehiculos_api_key: Optional[str] = None
 
     # --- autenticación (ver docs/06-autenticacion.md) ---
     # Si está habilitada, las rutas protegidas exigen el JWT que emite el servicio auth
@@ -93,6 +111,7 @@ class Settings(BaseSettings):
     @field_validator(
         "auth_url",
         "multas_url",
+        "vehiculos_api_key",
         "jwt_secret",
         "claves_servicio",
         "database_url",

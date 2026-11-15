@@ -115,8 +115,9 @@ El pase a Aiven (los 5 tópicos viejos y los 3 nuevos no pueden convivir) está 
 
 | Prioridad | Cambio | Para qué |
 |---|---|---|
-| 🔴 Flujo de multas | Agregar el campo `patente` (migración de Flyway, la hace el responsable). | El scraper de multas consulta por patente. |
-| 🔴 Flujo de multas | Recibir el resultado del scraper: `PUT /vehiculos/{id}/multas` o comando por `crm.comandos`, a definir. | Que vehiculos decida qué hacer con las multas. |
+| 🔴 Flujo de multas | Agregar el campo `patente` (migración de Flyway, la hace el responsable) y devolverlo en `GET /vehiculos/{id}`. | El orquestador lo consulta al publicar `ConsultarMultas`; sin patente el flujo queda FALLIDO. |
+| 🔴 Flujo de multas | **`PUT /vehiculos/{id}/multas`** (decidido: REST, no comando). Protegido con `X-Api-Key`; llega también `X-Correlation-Id` y `X-Origen-Servicio: orquestador`. Cuerpo: `{ dominio, infracciones: [{ numeroActa, dominio, importe, importeSinDescuento, tipoInfraccion, lugar, juzgado }], subtotal, mensaje? }` (`infracciones` vacío = sin multas). Responder 2xx si lo guardó: el orquestador no guarda el resultado y reintenta ante 5xx o cortes, pero con 400/401/403/404/409/422 deja el flujo FALLIDO sin reintentar. **Es idempotente** (puede llegar dos veces). Qué hace con las multas lo decide vehiculos. | Contrato: docs/08 §7. |
+| 🟡 Flujo de multas | `GET /vehiculos?disponible=true` ya existe: el barrido del orquestador lo usa y necesita el `id` de cada unidad. | Barrido periódico de multas. |
 | ⚪ | Fijar las imágenes del `Dockerfile` con versión exacta y digest. | Ídem calificacion. |
 
 ### MonitorMicroservice
@@ -150,16 +151,16 @@ El pase a Aiven (los 5 tópicos viejos y los 3 nuevos no pueden convivir) está 
 
 ### InfraccionScrapper (multas)
 
-Hoy es una librería y CLI de Node (consulta la ANSV por patente). Para ser el servicio **multas** del ecosistema le falta:
+Era una librería y CLI de Node (consulta la ANSV por patente). **Ya es el servicio `multas`** (rama `feat/servicio-kafka-multas`, entra con `pnpm start`; contrato en docs/08 §7). Lo que sigue pendiente:
 
 | Prioridad | Cambio | Para qué |
 |---|---|---|
-| 🔴 Flujo de multas | Un proceso que **consuma el comando `ConsultarMultas`** de `crm.comandos` (ignorando los que no tengan `destino: multas`) y **publique `MultasConsultadas`** (o `ConsultaMultasFallida`) en `crm.eventos`, con el sobre común, el `correlationId` y la clave `vehiculoId`. Aiven y Kafka local con SASL/SSL como el resto. | Es el canal decidido (asincrónico por Kafka). |
-| 🔴 Flujo de multas | **Concurrencia limitada** (arrancar en 1 consulta a la vez) y manejo de los tres errores existentes: `ErrorSitioNoDisponible` (reintentable), `ErrorEstructuraNoReconocida` (no reintentable, alerta) y patente sin multas (resultado válido). | No saturar ni que nos bloqueen el sitio de la ANSV. |
+| ✅ Flujo de multas | Un proceso que **consume el comando `ConsultarMultas`** de `crm.comandos` (ignorando los que no tengan `destino: multas`) y **publique `MultasConsultadas`** (o `ConsultaMultasFallida`) en `crm.eventos`, con el sobre común, el `correlationId` y la clave `vehiculoId`. Aiven y Kafka local con SASL/SSL como el resto. | Es el canal decidido (asincrónico por Kafka). |
+| ✅ Flujo de multas | **Concurrencia limitada** (arrancar en 1 consulta a la vez) y manejo de los tres errores existentes: `ErrorSitioNoDisponible` (reintentable), `ErrorEstructuraNoReconocida` (no reintentable, alerta) y patente sin multas (resultado válido). | No saturar ni que nos bloqueen el sitio de la ANSV. |
 | 🔴 Ecosistema en Docker / nube | `Dockerfile` basado en la imagen oficial de Playwright (trae Chromium), con usuario no root y versión fijada con digest. | Es el único repo sin imagen; Chromium no entra en un Dockerfile común. Ojo: la memoria del plan free de Render. |
-| 🟡 | Un `GET /health` (o un endpoint mínimo) para el monitor. Aunque el canal sea Kafka, el monitor sondea por HTTP. | Que el monitor y el orquestador vean si está vivo. |
-| 🟡 | Mantener el log sin datos personales (patente, actas, importes), como ya hace la CLI. | Ley 25.326. |
-| 🟡 | `pnpm` como único gestor (hay un `pnpm-workspace.yaml` en camino): `package-lock.json` y los comandos `npm`/`npx` del README pasan a `pnpm`. | Coherencia con el equipo. |
+| ✅ | Un `GET /health` para el monitor (falta agregar `multas` como objetivo del monitor). | Que el monitor y el orquestador vean si está vivo. |
+| ✅ | Log sin datos personales (patente, actas, importes), con tests. | Ley 25.326. |
+| 🟡 | `pnpm` como único gestor: ya hay `pnpm-lock.yaml` y `pnpm-workspace.yaml` (con `minimumReleaseAge` corregido); falta borrar `package-lock.json` y pasar los comandos `npm`/`npx` del resto del README a `pnpm`. | Coherencia con el equipo. |
 | ⚪ | Una caché corta por patente. | Menos pedidos a la ANSV. |
 
 Del lado de **vehiculos** (ya en su sección): el campo `patente` y el destino del resultado.
