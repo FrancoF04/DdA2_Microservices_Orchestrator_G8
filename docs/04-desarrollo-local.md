@@ -4,6 +4,39 @@ Cómo levantar todo el sistema en una sola máquina para desarrollar y probar: l
 
 Todos los repos tienen que estar uno al lado del otro en la misma carpeta (como `DdA2_Repos/`).
 
+> **¿Desplegar en la nube (Aiven + Supabase + Render)?** Eso es otro documento: [09-despliegue-desde-cero.md](09-despliegue-desde-cero.md).
+
+## Paso a paso (resumen)
+
+Cada paso tiene su detalle más abajo. El orden importa: los servicios crean sus tablas y sus tópicos al arrancar, y el orquestador tiene que estar arriba para que los demás se llamen entre sí.
+
+1. **Infraestructura:** `docker compose up -d` en este repo (Postgres con un schema por servicio y Kafka). Ver §1.
+2. **Un `.env` por servicio Python** y **variables de entorno para los Java**, con los valores de §2 (ya coinciden entre sí: claves de servicio, `JWT_SECRET`, URLs).
+3. **Levantar, en este orden**, cada uno en su terminal:
+
+   | # | Servicio | Comando (desde su repo) |
+   |---|---|---|
+   | 1 | orquestador | `alembic upgrade head` y `python -m app --reload` |
+   | 2 | auth | `uvicorn app.main:app --port 8086 --reload` |
+   | 3 | vehiculos | `./mvnw -pl vehiculos-service spring-boot:run` (con el perfil `seed`) |
+   | 4 | clientes | `./mvnw -pl clientes-service spring-boot:run` (la 1ra vez antes: `./mvnw -pl contracts -am install -DskipTests`) |
+   | 5 | calificacion | `./mvnw spring-boot:run` |
+   | 6 | leads | `uvicorn app.main:app --port 8000 --reload` |
+   | 7 | ia-resumen | `uvicorn app.main:app --port 8001 --reload` |
+   | 8 | multas | `pnpm start` (la 1ra vez: `pnpm install` y `pnpm exec playwright install chromium`) |
+   | 9 | monitor | `./mvnw spring-boot:run` |
+   | 10 | front | `pnpm dev` |
+
+   En PowerShell, `.\mvnw.cmd` en vez de `./mvnw`.
+4. **Probar todo de una** (lead de punta a punta y multas de la unidad AAA111):
+
+   ```bash
+   python scripts/verificar_despliegue.py --gateway http://127.0.0.1:8080 --monitor http://127.0.0.1:8085 \
+       --email admin@example.com --password admin-local-123        # agregar --sin-llm si no hay OLLAMA_API_KEY
+   ```
+
+   O paso por paso con `curl`, como en §3. Para entrar al front: <http://localhost:5173> con `admin@example.com` / `admin-local-123`.
+
 ## 1. Levantar la infraestructura
 
 Desde este repo:
@@ -48,7 +81,7 @@ Estas son las variables de cada servicio. Las URLs entre servicios apuntan al **
 | calificacion | 8084 |
 | monitor | 8085 |
 | auth | 8086 |
-| multas (propuesto, en desarrollo) | 8087 |
+| multas | 8087 |
 | front | 5173 |
 
 ### Orquestador (este repo)
@@ -63,6 +96,11 @@ CALIFICACION_URL=http://127.0.0.1:8084
 MONITOR_URL=http://127.0.0.1:8085
 IA_RESUMEN_URL=http://127.0.0.1:8001
 AUTH_URL=http://127.0.0.1:8086
+MULTAS_URL=http://127.0.0.1:8087
+# Flujo de multas (docs/08 §7): la misma clave que VEHICULOS_CLAVE_ESCRITURA de vehiculos.
+VEHICULOS_API_KEY=clave-local-vehiculos-de-32-caracteres-o-mas
+# Opcionales: consulta de multas automática al alta de una unidad y barrido diario.
+# MULTAS_AL_ALTA=true  MULTAS_BARRIDO_HABILITADO=true
 # Autenticación (docs/06-autenticacion.md): sin JWT_SECRET el orquestador NO arranca.
 # El mismo JWT_SECRET que AuthMicroservice. Claves de servicio: 32+ caracteres y distintas.
 JWT_SECRET=local-jwt-secret-solo-desarrollo-0123456789abcdef
@@ -182,7 +220,7 @@ VEHICULOS_CLAVE_ESCRITURA=clave-local-vehiculos-de-32-caracteres-o-mas
 ./mvnw -pl vehiculos-service spring-boot:run      # PowerShell: .\mvnw.cmd ...
 ```
 
-El seed carga 8 unidades. Por ejemplo, el Toyota Corolla `a0000000-0000-4000-8000-000000000001`, de $24.500.000, sirve como `vehiculoId` de prueba.
+El seed carga 10 unidades (8 disponibles), todas con patente de prueba. El Toyota Corolla `a0000000-0000-4000-8000-000000000001` (patente `AAA111`, de $24.500.000) sirve como `vehiculoId` de prueba para los leads y para las multas: `AAA111` tiene actas reales en la ANSV. Si tu base local ya tenía el seed de antes, al arrancar Flyway aplica la V2 y el seed completa las patentes que falten.
 
 ### ClientMicroservice (clientes)
 
@@ -206,7 +244,27 @@ Flyway crea las tablas en el schema `clientes`. Swagger en <http://localhost:808
 
 Declara los tres tópicos del ecosistema (`crm.comandos`, `crm.eventos` y `crm.dlt`) y los crea si no existen. Escucha `crm.comandos` y atiende el comando `RegistrarCalificacion` (con `destino: clientes`); sus eventos `ClienteActualizado` y `ClienteAnonimizado` salen por `crm.eventos`.
 
-Al arrancar lee `lead-calificado` desde el principio. Los mensajes viejos que tengas en el volumen de Kafka pueden terminar en la DLT con un WARN: es normal. Si usás calificacion **sin** el fix de `fecha` (rama `fix/fecha-lead-calificado-iso`, PR pendiente), sus mensajes reales **también van a la DLT** y el historial de clientes queda vacío (ver [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md)).
+Si tu volumen de Kafka tiene mensajes viejos que clientes no puede leer, terminan en `crm.dlt` con un WARN: es normal.
+
+### InfraccionScrapper (multas)
+
+El servicio que consulta la ANSV por patente: atiende `ConsultarMultas` de `crm.comandos` y responde en `crm.eventos` (docs/08 §7). Node, **solo con pnpm**.
+
+```dotenv
+KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
+# Vacías para el Kafka local (el .env.example trae lo de Aiven):
+KAFKA_SECURITY_PROTOCOL=
+KAFKA_SSL_CAFILE=
+PORT=8087
+```
+
+```bash
+pnpm install
+pnpm exec playwright install chromium   # una sola vez: el navegador que usa para consultar la ANSV
+pnpm start
+```
+
+`pnpm start` no lee el `.env` solo: exportar las variables antes en la terminal (o dejar los valores por defecto, que ya apuntan a `localhost:9092` y sin seguridad). Para consultar una patente sin Kafka: `pnpm exec node src/cli.js AAA111`.
 
 ### MonitorMicroservice
 
@@ -221,6 +279,10 @@ VEHICULOS_SERVICE_URL=http://127.0.0.1:8083
 CLIENTES_SERVICE_URL=http://127.0.0.1:8082
 LEADS_SERVICE_URL=http://127.0.0.1:8000
 CALIFICACION_SERVICE_URL=http://127.0.0.1:8084
+ORQUESTADOR_SERVICE_URL=http://127.0.0.1:8080
+IA_RESUMEN_SERVICE_URL=http://127.0.0.1:8001
+AUTH_SERVICE_URL=http://127.0.0.1:8086
+MULTAS_SERVICE_URL=http://127.0.0.1:8087
 ```
 
 ```bash
@@ -280,8 +342,18 @@ La cola (`/cola`) pide login: usar `admin@example.com` / `admin-local-123` (el a
 |---|---|---|
 | Unos segundos después | `RESUMEN_PENDIENTE`, con `CALIFICAR_LEAD` en `OK` (~1 s) | El lead queda `CALIFICADO` y el historial de clientes tiene la calificación `AUTOMATICA` |
 | Sin `OLLAMA_API_KEY` | A los `FLUJO_TIMEOUT_RESUMEN_SEGUNDOS`: `EXPIRADO`, con `GENERAR_RESUMEN` en `TIMEOUT` y el motivo en `ultimoError` | ia-resumen loguea `La variable OLLAMA_API_KEY no está configurada` |
-| Llega `resumen-generado` (aunque sea tarde) | `COMPLETADO`: el flujo sale de `EXPIRADO` | leads guarda el resumen |
+| Llega `ResumenGenerado` (aunque sea tarde) | `COMPLETADO`: el flujo sale de `EXPIRADO` | leads guarda el resumen |
 | `POST /api/calificaciones/{leadId}/correcciones` | Paso `CORRECCION_CALIFICACION` `OK`, sin cambiar el estado | Historial con una entrada `MANUAL` más |
+
+5. Consultar las multas de una unidad (la del Corolla tiene la patente `AAA111`, con actas reales):
+
+   ```bash
+   curl -X POST -H "Authorization: Bearer <access_token>" "http://127.0.0.1:8080/api/orquestador/multas/a0000000-0000-4000-8000-000000000001"
+   curl -H "Authorization: Bearer <access_token>" "http://127.0.0.1:8080/api/orquestador/flujos?leadId=a0000000-0000-4000-8000-000000000001&tipo=CONSULTA_MULTAS_VEHICULO"
+   curl -H "X-Api-Key: clave-local-vehiculos-de-32-caracteres-o-mas" "http://127.0.0.1:8083/vehiculos/a0000000-0000-4000-8000-000000000001/multas"
+   ```
+
+   El flujo pasa por `CONSULTANDO_MULTAS` y `ACTUALIZANDO_VEHICULO` hasta `COMPLETADO` (unos segundos: el scraper abre Chromium y consulta la ANSV). El detalle de las actas queda en vehiculos, no en el orquestador.
 
 Para ver el cierre sin Ollama, publicar a mano un evento `ResumenGenerado` en `crm.eventos`, con sobre y `payload: {leadId, resumen}` (clave del mensaje = `leadId`), con el mismo `kafka-console-producer` de la sección siguiente.
 
@@ -315,4 +387,6 @@ En Git Bash anteponer `MSYS_NO_PATHCONV=1` a los comandos `docker compose exec`,
 | `401 NO_AUTENTICADO` / `TOKEN_EXPIRADO` en una ruta que antes andaba | Ahora las rutas del operador piden login | Hacer login (paso 0 de la sección 3) y mandar el `Authorization: Bearer` |
 | `401 CLAVE_SERVICIO_INVALIDA` de un servicio al llamar por el orquestador | Su `ORQUESTADOR_CLAVE_SERVICIO` no coincide con su entrada en `CLAVES_SERVICIO` | Revisar que sea la misma clave, de 32+ caracteres |
 | `422` al hacer login con un email que existe en la base | `email-validator` rechaza dominios reservados como `.test` o `.local` | Usar un dominio válido (`@example.com`) |
+| Multas `FALLIDO` con "no tiene patente" | La unidad no tiene patente cargada | Cargarla con `PUT /api/vehiculos/{id}` (`{"patente":"AB123CD"}`) o volver a correr el seed |
+| El scraper falla con `Executable doesn't exist` | Falta el navegador de Playwright | `pnpm exec playwright install chromium` |
 | Los schemas no existen | El volumen de Postgres ya tenía datos de antes del script de inicialización | `docker compose down -v` y volver a levantar |
