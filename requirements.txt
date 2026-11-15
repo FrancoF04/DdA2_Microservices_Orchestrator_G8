@@ -9,6 +9,9 @@ pydantic-settings==2.16.2
 #---http-client (proxy)---#
 httpx==0.28.1
 
+#---auth (validación local del JWT de AuthMicroservice)---#
+PyJWT==2.15.1
+
 #---kafka---#
 aiokafka==0.15.0
 

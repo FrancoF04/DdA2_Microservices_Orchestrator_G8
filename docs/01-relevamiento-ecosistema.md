@@ -23,11 +23,11 @@ Confirmado por el equipo (2026-11-14): faltan **3** servicios, así que el ecosi
 | Servicio | Responsable | Puerto esperado | Qué hace / evidencia |
 |---|---|---|---|
 | **clientes** | Juan | 8082 | Datos personales, CUIL, consentimiento, situación crediticia e historial. **Ya existe** (repo `ClientMicroservice`, Spring Boot): ver §3.7. Lo llaman leads (`POST /clientes`), calificacion (`GET /clientes/{id}/situacion-crediticia`), ia-resumen y el front. |
-| **auth** | en desarrollo | 8086 (propuesto) | Autenticación del **telemarketer** (login). Todavía no hay repo. Hoy la cola y la corrección manual son públicas, y `usuario` en la corrección viaja libre. |
+| **auth** | en el equipo | 8086 | Autenticación del **telemarketer** (login). **Ya existe** (repo `AuthMicroservice`, FastAPI): ver §3.8 y [06-autenticacion.md](06-autenticacion.md). |
 | **scraper de multas** | en desarrollo | 8087 (propuesto) | Obtiene deudas por multas asociadas a la **patente** de los **autos en stock**. **Existe como librería y CLI** (repo `InfraccionScrapper`, Node): ver §3.9. El servicio y el campo `patente` en vehiculos todavía faltan. |
 
 - El servicio **precalificacion** (SOAP al BCRA) del documento v1.1 **no está en la lista**. clientes lo reemplaza con una fuente **simulada** (modo `simulado`); el adaptador al BCRA (`bcra`) queda para una segunda parte y hoy hace fallar el arranque si se activa. **[A confirmar si se hace]**
-- De estos 3 servicios, **clientes ya es real** (§3.7). **auth** y **multas** siguen siendo inferidos y hay que confirmarlos cuando se sumen.
+- De estos 3 servicios, **clientes** (§3.7) y **auth** (§3.8) ya son reales. **multas** sigue siendo la parte inferida (§3.9): el scraper existe como librería, pero todavía no como servicio.
 
 ## 2. Arquitectura actual en una mirada
 
@@ -242,11 +242,24 @@ Java 21 + Spring Boot 3.5, arquitectura hexagonal, PostgreSQL con Flyway (schema
 - **Situación crediticia:** fuente **simulada** por ahora (el último dígito del DNI decide el resultado), con caché de 30 días en base y circuit breaker.
 - **Problema detectado (2026-11-14, probado en local):** calificacion publica `fecha` como **array** (`[2026,11,14,18,56,6,49848900]`) y clientes exige texto ISO-8601, así que **todos los `lead-calificado` reales van a la DLT** y el historial queda vacío. **Corregido** en calificacion (rama `fix/fecha-lead-calificado-iso`, PR pendiente) y verificado de punta a punta. Ver [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md).
 
-### 3.8 auth* (inferido)
+### 3.8 auth (repo `AuthMicroservice`)
 
-- Login del telemarketer: probablemente `POST /auth/login` → token (JWT) y `GET /auth/me`.
-- Lo usarían el front, para loguearse y mandar el token, y el orquestador, para validar el token antes de dejar pasar las rutas del telemarketer.
-- Impacto en lo existente: hoy `GET /leads`, `PATCH /leads/{id}/state`, `GET /calificaciones/...`, `POST .../correcciones` y `GET /clientes/...` son públicos. El campo `usuario` de la corrección manual debería salir del token y no del body.
+Python 3.12 + FastAPI + SQLAlchemy, schema `auth` (tablas `usuarios`, `refresh_tokens`, `jwt_blacklist`; `create_all`, sin migraciones), sin Kafka. Puerto **8086** (acordado). Detalle de cómo se integra en [06-autenticacion.md](06-autenticacion.md).
+
+| Método | Ruta | Acceso |
+|---|---|---|
+| POST | `/auth/login` | Público. Email + contraseña → `access_token` (JWT) + `refresh_token` |
+| POST | `/auth/refresh` | Público. Rota el refresh token. `401` si el usuario fue desactivado |
+| POST | `/auth/logout` | Revoca el refresh token y pone el `jti` del access token en su blacklist |
+| GET | `/auth/me` | Autenticado |
+| POST / GET / PATCH | `/auth/usuarios` | Solo `ADMIN`. Desactivar un usuario revoca sus refresh tokens |
+| GET | `/health` | Público. `{"status":"ok"}` (el monitor lo toma como vivo) |
+
+- **JWT:** HS256 con secreto compartido (`JWT_SECRET`, 32+ caracteres, obligatorio); claims `sub`, `email`, `rol`, `jti`, `iat`, `exp`; **15 minutos**. Refresh opaco de 7 días, guardado como hash SHA-256.
+- **Roles:** `ADMIN`, `ASESOR`, `COMERCIAL`, `TELEMARKETING`.
+- **Quién valida el token:** el orquestador, localmente (los demás servicios no validan JWT).
+- **Corregido al integrarlo (2026-11-15):** `/auth/refresh` no chequeaba que el usuario siguiera activo; `JWT_SECRET` vacío no se validaba; faltaba el claim `email`; el puerto chocaba con leads / ia-resumen; las dependencias no estaban fijadas.
+- **Límite de intentos (2026-11-15):** tras 5 fallos seguidos del mismo email, el login responde `429` con `Retry-After` y hay que esperar 5 minutos. Ver [06 §2](06-autenticacion.md).
 
 ### 3.9 scraper de multas (repo `InfraccionScrapper`)
 

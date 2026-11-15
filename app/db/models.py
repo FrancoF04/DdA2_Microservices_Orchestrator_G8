@@ -120,6 +120,22 @@ class EventoProcesado(Base):
     )
 
 
+class TokenRevocado(Base):
+    """Access token de un operador invalidado por logout, identificado por su `jti`.
+
+    El orquestador valida los JWT localmente, así que necesita saber cuáles se
+    cerraron. Se guarda solo el `jti` hasta que el token vence (nunca el token).
+    """
+
+    __tablename__ = "token_revocado"
+
+    jti: Mapped[str] = mapped_column(Text, primary_key=True)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    revocado_en: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class Outbox(Base):
     """Comandos pendientes de publicar en Kafka (publicación confiable, fase 2)."""
 

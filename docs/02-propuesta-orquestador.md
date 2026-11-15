@@ -188,25 +188,25 @@ Ya existe y está probado detrás del proxy (alta con clave, ficha con `ETag`, `
 
 Las escrituras del personal (`PATCH`, no contactar, anonimización) hoy no piden clave porque no hay autenticación: cuando entre **auth** (§4.8) pasan a ser rutas protegidas y el orquestador inyecta `X-Usuario`.
 
-### 4.8 auth* (cuando se sume)
+### 4.8 auth — `AuthMicroservice`
 
-Es el servicio que **más cambia al orquestador**, porque lo convierte en el punto de control de acceso.
+**Implementado (2026-11-15).** Es el servicio que más cambia al orquestador, porque lo convierte en el punto de control de acceso. El detalle (rutas, códigos de error, configuración y límites) está en [06-autenticacion.md](06-autenticacion.md); acá, el resumen del diseño:
 
-| Interacción | Con orquestador | Fase |
-|---|---|---|
-| Front `POST /auth/login` | Vía `/api/auth/**` (ruta pública) | F1 |
-| Validación del token | El orquestador valida el JWT **localmente** (firma con clave pública/JWKS de auth, o secreto compartido) en cada request de rutas protegidas. **No** llama a auth en cada request: así, si auth se cae, los telemarketers ya logueados siguen trabajando | F1 |
-| Identidad hacia los servicios | El orquestador reenvía `X-Usuario` (y `X-Usuario-Rol`, si hay roles) sacados del token. **`X-Usuario` es el header que clientes ya lee** para registrar quién operó. El orquestador **descarta cualquier `X-Usuario` que venga de afuera**, para que nadie se haga pasar por otro telemarketer. Los servicios confían en ese header porque solo el orquestador los alcanza | F2 |
-
-Clasificación de rutas:
-
-| Pública (prospecto, sin login) | Protegida (telemarketer) |
+| Interacción | Con orquestador |
 |---|---|
-| `GET /api/vehiculos?disponible=true`, `GET /api/vehiculos/{id}` | `GET /api/leads`, `GET /api/leads/{id}`, `PATCH /api/leads/{id}/state` |
-| `POST /api/leads` | `GET /api/calificaciones/**`, `POST /api/calificaciones/{id}/correcciones` (el `usuario` sale del token) |
-| `POST /api/auth/login` | `GET /api/clientes/**`, `/api/monitor/**`, `/api/orquestador/**` |
+| Front `POST /auth/login`, `/refresh`, `/logout` | Vía `/api/auth/**` (rutas públicas). El resto de `/api/auth/**` (`/me`, `/usuarios`) es protegido |
+| Validación del token | El orquestador valida el JWT **localmente** (HS256, secreto compartido) en cada pedido protegido. **No** llama a auth: si auth se cae, los telemarketers ya logueados siguen trabajando |
+| Logout | Pasa por el orquestador, que invalida el access token **en el acto** (tabla `token_revocado`); el token dura 15 minutos como red de seguridad |
+| Identidad hacia los servicios | El orquestador agrega `X-Usuario` (el email) y `X-Usuario-Rol` sacados del token, y **descarta los que vengan de afuera**. `clientes` ya lee `X-Usuario`; `calificacion` lo usa como autor de la corrección manual |
+| Tráfico **entre servicios** | No usa JWT: cada servicio se identifica con `X-Origen-Servicio` + `X-Clave-Servicio` y solo llama a los recursos que le corresponden (§3.2, decisión 3) |
 
-El tráfico **entre servicios** no usa el token del telemarketer: se autentica con la clave de cada servicio (§3.2).
+Clasificación de rutas (la tabla completa está en 06 §3):
+
+| Pública (prospecto, sin login) | Protegida (operador logueado o servicio autorizado) |
+|---|---|
+| `GET /api/vehiculos/**` (datos y fotos) | `GET /api/leads`, `GET /api/leads/{id}`, `PATCH /api/leads/{id}/state` |
+| `POST /api/leads` (preformulario) | `/api/calificaciones/**` (la corrección toma el usuario del token) |
+| `POST /api/auth/login`, `/refresh`, `/logout` | `/api/clientes/**`, `/api/monitor/**`, `/api/orquestador/**` |
 
 ### 4.9 scraper de multas — `InfraccionScrapper`
 
@@ -555,7 +555,7 @@ AUDITORIA_RETENCION_DIAS=7
 
 1. ~~¿El orquestador reemplaza al API Gateway del documento (AD-10)?~~ **Resuelto (2026-11-14): sí.** El orquestador es el API Gateway del proyecto: puerto 8080, prefijo `/api`. Falta registrarlo como AD-16 en el documento de arquitectura.
 2. **Fase 2 de `resumen-solicitado`:** ¿se acepta que leads deje de publicarlo? Es el único cambio de código obligatorio en otro repo para que haya orquestación real.
-3. **Autenticación servicio → orquestador:** ¿pass-through de `X-Api-Key` (más simple) o claves por servicio con inyección en el orquestador (más seguro, centraliza secretos)?
+3. ~~**Autenticación servicio → orquestador:** ¿pass-through de `X-Api-Key` o claves por servicio?~~ **Resuelto (2026-11-15): claves por servicio.** Cada servicio manda `X-Origen-Servicio` + `X-Clave-Servicio`; el orquestador las valida, permite solo los recursos de cada uno y registra el origen verificado. La `X-Api-Key` del destino sigue de largo (dos capas). Ver [06 §4](06-autenticacion.md).
 4. **Correcciones manuales:** ¿una corrección debe volver a generar el resumen de la IA?
 5. **Sobre de eventos:** ¿se normaliza en todos los servicios al formato del documento (`version`, `occurredAt`) o el orquestador se queda tolerando las variantes?
 6. **Base:** confirmar con el responsable de Supabase (Naim) la creación del schema `orquestador` y del rol `orquestador_app`, y el presupuesto de conexiones del pooler.
@@ -564,6 +564,6 @@ AUDITORIA_RETENCION_DIAS=7
    - ¿Con qué frecuencia se re-consultan las unidades?
    - ¿vehiculos expone `PUT /vehiculos/{id}/multas` o escucha un comando por Kafka?
    - ¿Las multas afectan algo visible (precio, disponibilidad)? Eso lo decide vehiculos.
-9. **Auth:** ¿JWT firmado con clave asimétrica (el orquestador solo necesita la pública) o secreto compartido? ¿Hay roles además del telemarketer?
+9. ~~**Auth:** ¿JWT asimétrico o secreto compartido? ¿Roles?~~ **Resuelto (2026-11-15):** secreto compartido (HS256, `JWT_SECRET`); roles `ADMIN`, `ASESOR`, `COMERCIAL` y `TELEMARKETING`, y por ahora cualquier operador logueado accede a todo lo protegido. Pasar a RS256 queda como mejora (06 §8).
 10. **BCRA:** ¿desaparece el servicio precalificacion y la consulta la hace clientes directo?
 11. **Front:** ¿quieren mostrar el estado del flujo (`/api/orquestador/flujos?leadId=`) en la cola o en la confirmación del preformulario?

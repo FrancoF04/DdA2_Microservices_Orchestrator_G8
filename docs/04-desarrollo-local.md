@@ -47,7 +47,7 @@ Estas son las variables de cada servicio. Las URLs entre servicios apuntan al **
 | vehiculos | 8083 |
 | calificacion | 8084 |
 | monitor | 8085 |
-| auth (propuesto, en desarrollo) | 8086 |
+| auth | 8086 |
 | multas (propuesto, en desarrollo) | 8087 |
 | front | 5173 |
 
@@ -62,6 +62,12 @@ VEHICULOS_URL=http://127.0.0.1:8083
 CALIFICACION_URL=http://127.0.0.1:8084
 MONITOR_URL=http://127.0.0.1:8085
 IA_RESUMEN_URL=http://127.0.0.1:8001
+AUTH_URL=http://127.0.0.1:8086
+# Autenticación (docs/06-autenticacion.md): sin JWT_SECRET el orquestador NO arranca.
+# El mismo JWT_SECRET que AuthMicroservice. Claves de servicio: 32+ caracteres y distintas.
+JWT_SECRET=local-jwt-secret-solo-desarrollo-0123456789abcdef
+CLAVES_SERVICIO=leads=clave-gateway-leads-local-0000000000001,calificacion=clave-gateway-calificacion-local-00000001,ia-resumen=clave-gateway-ia-resumen-local-0000000001
+# Para trabajar sin login (solo desarrollo): AUTH_HABILITADA=false
 ```
 
 ```bash
@@ -82,6 +88,8 @@ DATABASE_URL=postgresql+psycopg://leads:leads@127.0.0.1:5432/postgres
 FRONTEND_LIST=["http://localhost:5173"]
 CLIENTES_URL=http://127.0.0.1:8080/api
 CLIENTES_CLAVE_LEADS=solo-local-clave-de-servicio-leads-0001
+# La clave de "leads" en CLAVES_SERVICIO del orquestador (credencial ante el gateway).
+ORQUESTADOR_CLAVE_SERVICIO=clave-gateway-leads-local-0000000000001
 KAFKA_ENABLED=true
 KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
 ```
@@ -97,6 +105,8 @@ Las tablas se crean solas en el schema `leads` (el usuario `leads` lo tiene como
 ```dotenv
 CLIENTES_URL=http://127.0.0.1:8080/api
 VEHICULOS_URL=http://127.0.0.1:8080/api
+# La clave de "ia-resumen" en CLAVES_SERVICIO del orquestador (credencial ante el gateway).
+ORQUESTADOR_CLAVE_SERVICIO=clave-gateway-ia-resumen-local-0000000001
 KAFKA_ENABLED=true
 KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
 # Vacías para el Kafka local (el .env.example trae SASL_SSL de Aiven):
@@ -121,11 +131,34 @@ SPRING_KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
 CLIENTES_SERVICE_URL=http://127.0.0.1:8080/api
 VEHICULOS_SERVICE_URL=http://127.0.0.1:8080/api
 CLIENTES_CLAVE_CALIFICACION=solo-local-clave-de-servicio-calificacion-0001
+# La clave de "calificacion" en CLAVES_SERVICIO del orquestador (credencial ante el gateway).
+ORQUESTADOR_CLAVE_SERVICIO=clave-gateway-calificacion-local-00000001
 ```
 
 ```bash
 ./mvnw spring-boot:run          # PowerShell: .\mvnw.cmd spring-boot:run
 ```
+
+### AuthMicroservice
+
+Login de los operadores (telemarketers y admins). Python/FastAPI, en el schema `auth`.
+
+```dotenv
+DATABASE_URL=postgresql://auth:auth@127.0.0.1:5432/postgres
+DB_SCHEMA=auth
+# El MISMO secreto que JWT_SECRET del orquestador. 32+ caracteres o el servicio no arranca.
+JWT_SECRET=local-jwt-secret-solo-desarrollo-0123456789abcdef
+# Crea este ADMIN al arrancar si no existe. Usar un dominio válido (admin@crm.test lo rechaza el login).
+SEED_ADMIN_EMAIL=admin@example.com
+SEED_ADMIN_PASSWORD=admin-local-123
+FRONTEND_LIST=["http://localhost:5173"]
+```
+
+```bash
+uvicorn app.main:app --port 8086 --reload
+```
+
+Después, el login se hace **por el orquestador** (`POST http://127.0.0.1:8080/api/auth/login`). Ver [06-autenticacion.md](06-autenticacion.md).
 
 ### VehiculosMicroservice
 
@@ -206,7 +239,16 @@ El orquestador ya permite el origen `http://localhost:5173` en CORS. El sondeo d
 
 ## 3. Probar el flujo completo
 
-1. Enviar un preformulario por el orquestador:
+0. Iniciar sesión como operador (el preformulario no lo necesita, todo lo demás sí):
+
+   ```bash
+   curl -X POST http://127.0.0.1:8080/api/auth/login -H "Content-Type: application/json" \
+        -d '{"email":"admin@example.com","password":"admin-local-123"}'
+   # → {"access_token":"...","refresh_token":"...","token_type":"bearer"}
+   ```
+
+   En los comandos siguientes, los que piden login llevan `-H "Authorization: Bearer <access_token>"`. El token dura 15 minutos; se renueva con `POST /api/auth/refresh`.
+1. Enviar un preformulario por el orquestador (**público**, sin token):
 
    ```bash
    curl -X POST http://127.0.0.1:8080/api/leads -H "Content-Type: application/json" -H "X-Correlation-Id: prueba-1" -d @preformulario.json
@@ -217,7 +259,7 @@ El orquestador ya permite el origen `http://localhost:5173` en CORS. El sondeo d
 3. Ver las llamadas que pasaron por el orquestador:
 
    ```bash
-   curl "http://127.0.0.1:8080/api/orquestador/servicios?ventana_minutos=60"
+   curl -H "Authorization: Bearer <access_token>" "http://127.0.0.1:8080/api/orquestador/servicios?ventana_minutos=60"
    ```
 
    O directo en la base: `select * from orquestador.llamada_servicio order by id;`
@@ -225,8 +267,8 @@ El orquestador ya permite el origen `http://localhost:5173` en CORS. El sondeo d
 4. Ver el flujo del lead y el historial del cliente (el `leadId` lo devuelve el `POST`; el `clienteId` está en `GET /api/leads/{leadId}`):
 
    ```bash
-   curl "http://127.0.0.1:8080/api/orquestador/flujos?leadId=<leadId>"
-   curl "http://127.0.0.1:8080/api/clientes/<clienteId>/historial"
+   curl -H "Authorization: Bearer <access_token>" "http://127.0.0.1:8080/api/orquestador/flujos?leadId=<leadId>"
+   curl -H "Authorization: Bearer <access_token>" "http://127.0.0.1:8080/api/clientes/<clienteId>/historial"
    ```
 
 **Resultado esperado** (verificado el 2026-11-14 con los seis servicios nativos):
@@ -264,4 +306,8 @@ En Git Bash anteponer `MSYS_NO_PATHCONV=1` a los comandos `docker compose exec`,
 | Cada llamada entre servicios tarda ~2 s de más | `localhost` en Windows | Usar `127.0.0.1` |
 | `port is already allocated` al levantar el compose | Otro Postgres o Kafka en 5432/9092 (por ejemplo el compose de leads) | Apagar el otro, o `POSTGRES_PUERTO=5433` |
 | clientes no arranca o responde `401 CLAVE_SERVICIO_INVALIDA` | Claves de servicio de menos de 32 caracteres, iguales entre sí, o distintas entre clientes y quien lo llama | Usar las del perfil `local` (ver sección de clientes) en los `.env` de leads y calificacion |
+| El orquestador no arranca: `Falta JWT_SECRET` | La autenticación está habilitada por defecto y no hay secreto | Definir `JWT_SECRET` (igual al de auth), o `AUTH_HABILITADA=false` solo para desarrollo |
+| `401 NO_AUTENTICADO` / `TOKEN_EXPIRADO` en una ruta que antes andaba | Ahora las rutas del operador piden login | Hacer login (paso 0 de la sección 3) y mandar el `Authorization: Bearer` |
+| `401 CLAVE_SERVICIO_INVALIDA` de un servicio al llamar por el orquestador | Su `ORQUESTADOR_CLAVE_SERVICIO` no coincide con su entrada en `CLAVES_SERVICIO` | Revisar que sea la misma clave, de 32+ caracteres |
+| `422` al hacer login con un email que existe en la base | `email-validator` rechaza dominios reservados como `.test` o `.local` | Usar un dominio válido (`@example.com`) |
 | Los schemas no existen | El volumen de Postgres ya tenía datos de antes del script de inicialización | `docker compose down -v` y volver a levantar |

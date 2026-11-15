@@ -9,7 +9,7 @@ Orquestador central del ecosistema de microservicios del TP de Desarrollo de Apl
 
 ## Repos hermanos
 
-Viven en la carpeta padre (`../`). Ver [docs/01-relevamiento-ecosistema.md](docs/01-relevamiento-ecosistema.md) para endpoints, tópicos y rama base de cada uno. Faltan sumar 3 microservicios: `clientes`, `auth` (login del telemarketer) y `scraper de multas` (deudas por patente).
+Viven en la carpeta padre (`../`). Ver [docs/01-relevamiento-ecosistema.md](docs/01-relevamiento-ecosistema.md) para endpoints, tópicos y rama base de cada uno. Ya están `clientes` y `auth` (login del telemarketer, ver [docs/06-autenticacion.md](docs/06-autenticacion.md)). Falta convertir en servicio el `scraper de multas` (deudas por patente; hoy es una librería).
 
 El orquestador **es el API Gateway del proyecto** (reemplaza el gateway de AD-10): puerto 8080, rutas `/api/{recurso}/**`.
 
