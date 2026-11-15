@@ -58,6 +58,9 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 | 2026-11-14 | CalificacionMicroservice (#6), VehiculosMicroservice (#19), MonitorMicroservice | Maven Wrapper con Maven 3.9.16: ya no hace falta instalar Maven para correrlos. |
 | 2026-11-14 | CalificacionMicroservice (rama `fix/fecha-lead-calificado-iso`, PR pendiente) | `fecha` de `lead-calificado` como texto ISO-8601 (antes array). Con esto el historial de clientes se llena en el flujo real. |
 | 2026-11-15 | CalificacionMicroservice (misma rama, PR pendiente) | `spring-boot-starter-actuator` y `GET /actuator/health`: el monitor deja de ver a calificacion como `DOWN`. |
+| 2026-11-15 | CalificacionMicroservice (#7) | Mergeadas la `fecha` ISO-8601 y `/actuator/health`. |
+| 2026-11-15 | AuthMicroservice (rama `fix/seguridad-tokens`, sin PR todavía) | `/auth/refresh` falla si el usuario está inactivo; desactivar un usuario revoca sus refresh tokens; `JWT_SECRET` obligatorio (32+ caracteres); claim `email`; access token de 15 min; puerto 8086; dependencias fijadas. |
+| 2026-11-15 | LeadsMicroservice, IAllmFormulario, CalificacionMicroservice (ramas `feat/identidad-de-servicio-orquestador`, sin PR todavía) | Se identifican ante el orquestador con `X-Origen-Servicio` + `X-Clave-Servicio` (variable `ORQUESTADOR_CLAVE_SERVICIO`, opcional si llaman directo). calificacion además toma el autor de la corrección manual de `X-Usuario`. |
 | 2026-11-14 | ClientMicroservice (#8) | Maven Wrapper con Maven 3.9.16 (PR abierta; con esto los cuatro repos Java lo tienen). |
 
 ## Por repo
@@ -118,6 +121,7 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 | Prioridad | Cambio | Para qué |
 |---|---|---|
 | 🔴 Pasar el tráfico por el orquestador | Apuntar las `VITE_*_API_URL` al orquestador (`<orq>/api`). | Sin esto el front sigue llamando a cada servicio directo. |
+| 🔴 Login del operador | Pantalla de login (`POST /api/auth/login`); guardar `access_token` y `refresh_token`; mandar `Authorization: Bearer` en cada pedido; cuando llega `401` con `codigo: TOKEN_EXPIRADO`, llamar a `POST /api/auth/refresh`, guardar el par nuevo y **reintentar** el pedido (si el refresh falla, volver al login); logout con `POST /api/auth/logout`. El preformulario y el catálogo de vehículos **siguen sin login**. | Sin esto, la cola, la ficha del lead y la corrección reciben `401`. Ver [06-autenticacion.md](06-autenticacion.md). |
 | 🟡 | Rehacer el sondeo de respaldo de la página Monitor (`src/api/monitorClient.js`). | Con las URLs nuevas deja de funcionar. Opciones en [03-despliegue-render.md §4](03-despliegue-render.md#nota-sondeo-de-respaldo-del-front). |
 | ⚪ | Unificar las `VITE_*_API_URL` en una sola (`VITE_API_URL`, que ya existe). | Con el gateway todas valen lo mismo. |
 
@@ -130,7 +134,7 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 | 🟡 | Corregir el comando del README: `mvnw -pl clientes-service -am spring-boot:run` **falla** porque con `-am` Maven corre `spring-boot:run` también sobre el POM padre. Funciona con `mvnw -pl contracts -am install -DskipTests` (una vez) y luego `mvnw -pl clientes-service spring-boot:run`. | Que se pueda levantar siguiendo el README. |
 | 🟡 | Perfil `local` apuntando a la infra compartida (un Postgres con schema por servicio y Kafka en 9092), o un perfil nuevo. Hoy espera la base `clientes_db` y Kafka en el 29092 del compose del propio repo. | Hoy hay que pisarlo con `SPRING_DATASOURCE_URL` y `KAFKA_PUERTO_HOST` (ver [04](04-desarrollo-local.md)). |
 | 🟡 | Mandar `X-Origen-Servicio: clientes` si llegara a llamar a otro servicio. Hoy no llama a ninguno. | Trazabilidad. |
-| 🟡 | `GET /clientes/{id}/historial` y las escrituras del personal quedan sin autenticar hasta que entre **auth**: el orquestador va a protegerlas. | Seguridad. |
+| ✅ | `GET /clientes/{id}/historial` y las escrituras del personal ya están protegidas: el orquestador exige login y le manda `X-Usuario` (ver [06](06-autenticacion.md)). | Seguridad. |
 | ⚪ | Que alguien consuma `cliente-actualizado` y `cliente-anonimizado` (leads los necesita para mantener sus copias). | Hoy nadie los lee. |
 
 ### InfraccionScrapper (multas)
@@ -149,17 +153,24 @@ Hoy es una librería y CLI de Node (consulta la ANSV por patente). Para ser el s
 
 Del lado de **vehiculos** (ya en su sección): el campo `patente` y el destino del resultado.
 
-### Servicios nuevos (auth)
+### AuthMicroservice (auth)
 
-**auth** (login del telemarketer, en desarrollo) es el único que todavía no tiene repo. Lo que necesitamos del equipo, para integrarlo sin retrabajo:
+Ya existe y está integrado (ver [06-autenticacion.md](06-autenticacion.md)). Lo hecho al integrarlo está en "Hechos". Queda:
 
-- **Puerto** (propongo 8086), `GET /health` y `Dockerfile`.
-- **JWT:** algoritmo (¿RS256 con clave pública o secreto compartido?), claims (`usuario`, `rol`) y duración. El orquestador valida el token **localmente**, sin llamar a auth en cada request.
-- **Endpoints:** `POST /auth/login` y, si aplica, `GET /auth/me`.
-- **Identidad hacia los servicios:** el orquestador inyecta `X-Usuario` (el header que clientes ya lee) y descarta el que venga de afuera.
-- **Impacto en el resto:** pasan a rutas protegidas `GET /leads`, `PATCH /leads/{id}/state`, las calificaciones, las escrituras de clientes y `/api/orquestador/**`. El campo `usuario` de la corrección manual debería salir del token.
+| Prioridad | Cambio | Para qué |
+|---|---|---|
+| 🟡 | **Limitar los intentos de login** (por IP y por email) y devolver `429`. | Hoy se puede probar contraseñas sin freno. |
+| 🟡 | Detectar el **reuso de un refresh token** y cerrar toda la sesión del usuario. | Un refresh robado y usado tras la rotación no se nota. |
+| 🟡 | `Dockerfile` con usuario no root, versión de la imagen fijada con digest y `HEALTHCHECK` contra `/health`; `/health` que verifique la base. | Es el único servicio Python sin esto; para el pase a la nube. |
+| 🟡 | Agregar auth como objetivo del **monitor** (`/health`). | Hoy no lo vigila. |
+| ⚪ | Migraciones (Alembic) en vez de `create_all`, como el orquestador. | Cambios de esquema sin perder datos. |
+| ⚪ | Pasar a **RS256**: auth firma con la clave privada y el orquestador solo necesita la pública. | Hoy quien tenga `JWT_SECRET` puede firmar tokens. |
+| ⚪ | Que el orquestador revoque por usuario cuando ve el `PATCH /api/auth/usuarios/{id}` con `activo: false`. | Hoy el access token de un usuario desactivado vale hasta 15 min. |
+| ⚪ | Validar que `SEED_ADMIN_EMAIL` sea un email válido para el login (`.test` y `.local` los rechaza `email-validator`). | Evita crear un admin que no puede entrar. |
 
-Al crearlos (auth) conviene que nazca ya con:
+### Servicios nuevos
+
+Al crearlos conviene que nazcan ya con:
 
 - `GET /health` (o Actuator) y un `Dockerfile`.
 - Kafka con el esquema de 3 tópicos, si lo usan.
