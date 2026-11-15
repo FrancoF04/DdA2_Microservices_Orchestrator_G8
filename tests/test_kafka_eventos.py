@@ -36,3 +36,11 @@ def test_sasl_ssl_arma_ssl_context() -> None:
     assert args["security_protocol"] == "SASL_SSL"
     assert args["sasl_plain_username"] == "u"
     assert "ssl_context" in args
+
+
+def test_el_comando_lleva_destino_y_el_evento_no() -> None:
+    comando = armar_sobre("CalificarLead", {"leadId": "L1"}, "C1", destino="calificacion")
+    evento = armar_sobre("LeadCalificado", {"leadId": "L1"}, "C1")
+
+    assert comando["destino"] == "calificacion"
+    assert "destino" not in evento

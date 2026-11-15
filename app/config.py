@@ -54,18 +54,14 @@ class Settings(BaseSettings):
     kafka_sasl_password: Optional[str] = None
     kafka_ssl_cafile: Optional[str] = None
     kafka_reintento_conexion_segundos: float = 15.0
-    # Tópicos que escucha el orquestador para seguir el flujo del lead (los publican otros servicios).
-    kafka_topico_preformulario_completado: str = "preformulario-completado"
-    kafka_topico_lead_calificado: str = "lead-calificado"
-    kafka_topico_resumen_solicitado: str = "resumen-solicitado"
-    kafka_topico_resumen_generado: str = "resumen-generado"
-    kafka_topico_preformulario_dlt: str = "preformulario-completado-dlt"
+    # Los tres tópicos del ecosistema (docs/08-contrato-tres-topicos.md):
+    # comandos = órdenes, solo las publica el orquestador; eventos = hechos, los publican los servicios
+    # y solo los lee el orquestador; dlt = mensajes que agotaron sus reintentos en cualquier servicio.
+    kafka_topico_comandos: str = "crm.comandos"
+    kafka_topico_eventos: str = "crm.eventos"
+    kafka_topico_dlt: str = "crm.dlt"
 
-    # --- orquestación (tanda A) ---
-    # Si está encendido, el orquestador publica `resumen-solicitado` cuando el lead queda
-    # calificado, y leads tiene que dejar de hacerlo (si no, el resumen se pide dos veces).
-    # Apagado, el orquestador solo observa el flujo, como en la fase 1b.
-    orquestador_publica_resumen: bool = False
+    # --- orquestación ---
     # Intentos de publicar un comando antes de abandonarlo (el flujo queda FALLIDO) y espera
     # entre intentos: base * 2^(intento-1), con tope.
     outbox_max_intentos: int = 5

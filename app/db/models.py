@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, MetaData, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, Integer, MetaData, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -139,14 +139,18 @@ class TokenRevocado(Base):
 class Outbox(Base):
     """Comandos pendientes de publicar en Kafka (publicación confiable).
 
-    `mensaje` guarda solo a qué lead se refiere el comando; los datos del payload se
-    consultan a leads al publicar, así no se copian datos de negocio acá.
-    Un comando pendiente tiene `publicado_en` y `abandonado_en` en NULL.
+    `mensaje` = {eventType, destino, leadId, correlationId} y, en los comandos que reenvían
+    datos de un evento, el `payload`. El payload se guarda **solo mientras el comando está
+    pendiente**: al publicarse o abandonarse se borra, así no quedan datos de negocio acá.
+    `GenerarResumen` no lleva payload: se arma al publicar, consultando a leads.
+    Un comando pendiente tiene `publicado_en` y `abandonado_en` en NULL. `orden` fija la
+    secuencia: los comandos de un mismo lead se publican en el orden en que se anotaron.
     """
 
     __tablename__ = "outbox"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    orden: Mapped[int] = mapped_column(BigInteger, Identity(), nullable=False, index=True)
     flujo_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("flujo.id", ondelete="CASCADE"), index=True
     )

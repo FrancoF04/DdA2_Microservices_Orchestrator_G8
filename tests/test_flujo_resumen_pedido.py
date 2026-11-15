@@ -211,3 +211,69 @@ def test_el_payload_falla_si_leads_no_devuelve_un_dato_obligatorio() -> None:
 
     with pytest.raises(ValueError, match="cliente_id"):
         armar_payload_resumen(lead)
+
+
+# ------------------------------------------------- tanda B: órdenes y fallas
+
+
+def test_el_primer_preformulario_ordena_calificar(flujo: Flujo, settings: Settings) -> None:
+    assert rl.al_preformulario_completado(flujo, t(0), "e1", settings) is True
+
+
+def test_un_preformulario_repetido_no_ordena_calificar_de_nuevo(flujo: Flujo, settings: Settings) -> None:
+    rl.al_preformulario_completado(flujo, t(0), "e1", settings)
+
+    assert rl.al_preformulario_completado(flujo, t(1), "e2", settings) is False
+
+
+def test_un_preformulario_que_llega_despues_de_la_calificacion_no_ordena_calificar(
+    flujo: Flujo, settings: Settings
+) -> None:
+    rl.al_lead_calificado(flujo, t(2), "e2", "AUTOMATICA", settings)
+
+    assert rl.al_preformulario_completado(flujo, t(1), "e1", settings) is False
+
+
+def test_calificar_lead_que_no_se_pudo_publicar_deja_el_flujo_fallido(flujo: Flujo, settings: Settings) -> None:
+    rl.al_preformulario_completado(flujo, t(0), "e1", settings)
+
+    rl.al_calificar_no_publicado(flujo, t(5), "cmd-1", "Kafka no disponible")
+
+    assert flujo.estado == rl.FALLIDO
+    assert "Kafka no disponible" in flujo.ultimo_error
+    assert _pasos(flujo, rl.CALIFICAR_LEAD)[0].estado == rl.ERROR
+
+
+def test_calificar_lead_abandonado_no_pisa_un_flujo_ya_calificado(flujo: Flujo, settings: Settings) -> None:
+    rl.al_preformulario_completado(flujo, t(0), "e1", settings)
+    rl.al_lead_calificado(flujo, t(1), "e2", "AUTOMATICA", settings)
+
+    rl.al_calificar_no_publicado(flujo, t(5), "cmd-1", "Kafka no disponible")
+
+    assert flujo.estado == rl.CALIFICADO
+
+
+def test_generar_resumen_en_la_dlt_deja_el_flujo_fallido_y_un_resumen_posterior_lo_recupera(
+    flujo: Flujo, settings: Settings
+) -> None:
+    rl.al_preformulario_completado(flujo, t(0), "e1", settings)
+    rl.al_lead_calificado(flujo, t(1), "e2", "AUTOMATICA", settings)
+    rl.al_resumen_solicitado(flujo, t(2), "e3", settings)
+
+    rl.al_resumen_en_dlt(flujo, t(3), "dlt-1", settings)
+
+    assert flujo.estado == rl.FALLIDO
+    assert _pasos(flujo, rl.GENERAR_RESUMEN)[0].estado == rl.ERROR
+    rl.al_resumen_generado(flujo, t(4), "e4", settings)
+    assert flujo.estado == rl.COMPLETADO
+
+
+def test_un_comando_con_error_queda_como_paso_sin_cambiar_el_estado(flujo: Flujo, settings: Settings) -> None:
+    rl.al_preformulario_completado(flujo, t(0), "e1", settings)
+    rl.al_lead_calificado(flujo, t(1), "e2", "AUTOMATICA", settings)
+
+    rl.al_comando_con_error(flujo, "REGISTRAR_CALIFICACION", "clientes", t(2), "dlt-1", "no pudo")
+
+    assert flujo.estado == rl.CALIFICADO
+    paso, = _pasos(flujo, "REGISTRAR_CALIFICACION")
+    assert (paso.servicio, paso.estado, paso.detalle_error) == ("clientes", rl.ERROR, "no pudo")

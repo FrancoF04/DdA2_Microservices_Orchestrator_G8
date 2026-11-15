@@ -16,9 +16,11 @@ def armar_sobre(
     payload: dict[str, Any],
     correlation_id: Optional[str] = None,
     version: int = 1,
+    destino: Optional[str] = None,
 ) -> dict[str, Any]:
+    """`destino` va solo en los comandos: es el servicio que los tiene que atender."""
     ahora = datetime.now(timezone.utc).isoformat()
-    return {
+    sobre = {
         "eventId": str(uuid.uuid4()),
         "eventType": event_type,
         "version": version,
@@ -27,6 +29,9 @@ def armar_sobre(
         "correlationId": correlation_id or str(uuid.uuid4()),
         "payload": payload,
     }
+    if destino is not None:
+        sobre["destino"] = destino
+    return sobre
 
 
 def extraer_payload(mensaje: dict[str, Any]) -> dict[str, Any]:

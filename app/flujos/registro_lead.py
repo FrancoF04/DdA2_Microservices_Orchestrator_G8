@@ -1,12 +1,16 @@
 """Flujo REGISTRO_LEAD: seguimiento del lead desde el preformulario hasta el resumen.
 
-Fase 1b: el orquestador **observa** (no da órdenes). Escucha los eventos que
-publican leads, calificacion e ia-resumen y avanza la máquina de estados:
+El orquestador dirige el flujo (docs/08-contrato-tres-topicos.md): escucha los eventos
+que publican leads, calificacion e ia-resumen en `crm.eventos`, avanza la máquina de
+estados y ordena el paso siguiente en `crm.comandos`:
 
-    CALIFICACION_PENDIENTE ──lead-calificado──► CALIFICADO ──resumen-solicitado──►
-    RESUMEN_PENDIENTE ──resumen-generado──► COMPLETADO
+    PreformularioCompletado ─► CalificarLead ──► CALIFICACION_PENDIENTE
+    LeadCalificado ─► RegistrarCalificacion + ActualizarCalificacion + GenerarResumen ──► CALIFICADO
+    (GenerarResumen publicado) ──► RESUMEN_PENDIENTE
+    ResumenGenerado ─► GuardarResumen ──► COMPLETADO
 
-    Desvíos: FALLIDO (DLT de calificacion) y EXPIRADO (vence el tiempo del paso).
+    Desvíos: FALLIDO (DLT de calificacion o ia-resumen, o comando que no se pudo publicar)
+    y EXPIRADO (vence el tiempo del paso).
 
 Reglas:
 - El flujo nace con `preformulario-completado`, o con el primer evento que
@@ -15,7 +19,7 @@ Reglas:
   cambia el estado (ver `progreso`).
 - Un flujo EXPIRADO o FALLIDO se recupera solo si después llega el evento que
   faltaba.
-- Las correcciones manuales (`lead-calificado` con origen MANUAL) se registran
+- Las correcciones manuales (`LeadCalificado` con origen MANUAL) se registran
   como paso pero no cambian el estado.
 """
 
@@ -58,9 +62,9 @@ _RANGO_PASO = {
 }
 
 _MOTIVO_VENCIMIENTO = {
-    CALIFICACION_PENDIENTE: "calificacion no respondió a tiempo (no llegó lead-calificado)",
-    CALIFICADO: "no se pidió el resumen a tiempo (no se publicó resumen-solicitado)",
-    RESUMEN_PENDIENTE: "ia-resumen no respondió a tiempo (no llegó resumen-generado)",
+    CALIFICACION_PENDIENTE: "calificacion no respondió a tiempo (no llegó LeadCalificado)",
+    CALIFICADO: "no se pidió el resumen a tiempo (no se publicó GenerarResumen)",
+    RESUMEN_PENDIENTE: "ia-resumen no respondió a tiempo (no llegó ResumenGenerado)",
 }
 
 
@@ -132,16 +136,23 @@ def _avanzar(flujo: Flujo, destino: str, vence_en: Optional[datetime], paso_actu
 # ---------------------------------------------------------------- eventos
 
 
-def al_preformulario_completado(flujo: Flujo, momento: datetime, referencia: str, settings: Settings) -> None:
+def al_preformulario_completado(flujo: Flujo, momento: datetime, referencia: str, settings: Settings) -> bool:
+    """Aplica `PreformularioCompletado`. Devuelve True si hay que ordenar `CalificarLead`.
+
+    Se ordena una sola vez por flujo: si el paso ya existe (el evento se repitió o la
+    calificación llegó antes) no se vuelve a pedir.
+    """
+    primera_vez = _paso(flujo, CALIFICAR_LEAD) is None and progreso(flujo) < _RANGO_ESTADO[CALIFICADO]
     _abrir_paso(flujo, CALIFICAR_LEAD, "calificacion", momento, referencia)
     vence = momento + timedelta(seconds=settings.flujo_timeout_calificacion_segundos)
     _avanzar(flujo, CALIFICACION_PENDIENTE, vence, CALIFICAR_LEAD)
+    return primera_vez
 
 
 def al_lead_calificado(
     flujo: Flujo, momento: datetime, referencia: str, origen: Optional[str], settings: Settings
 ) -> bool:
-    """Aplica `lead-calificado`. Devuelve True si hay que pedir el resumen a ia-resumen.
+    """Aplica `LeadCalificado`. Devuelve True si hay que pedir el resumen a ia-resumen.
 
     Se pide una sola vez por flujo: ni una corrección manual ni una calificación
     repetida, con el resumen ya pedido, lo vuelven a pedir.
@@ -196,13 +207,53 @@ def al_resumen_generado(flujo: Flujo, momento: datetime, referencia: str, settin
 
 
 def al_preformulario_en_dlt(flujo: Flujo, momento: datetime, referencia: str, settings: Settings) -> None:
-    """calificacion agotó sus reintentos con este preformulario."""
-    detalle = "calificacion no pudo procesar el preformulario (mensaje enviado a la DLT)"
+    """calificacion agotó sus reintentos con el comando `CalificarLead`."""
+    _calificacion_fallida(
+        flujo, momento, referencia, "calificacion no pudo procesar el comando (mensaje enviado a la DLT)"
+    )
+
+
+def al_calificar_no_publicado(flujo: Flujo, momento: datetime, referencia: str, detalle: str) -> None:
+    """El orquestador agotó los intentos de publicar `CalificarLead`."""
+    _calificacion_fallida(flujo, momento, referencia, f"No se pudo publicar CalificarLead: {detalle}"[:500])
+
+
+def _calificacion_fallida(flujo: Flujo, momento: datetime, referencia: str, detalle: str) -> None:
     _cerrar_paso(flujo, CALIFICAR_LEAD, "calificacion", ERROR, momento, referencia, detalle)
     if progreso(flujo) < _RANGO_ESTADO[CALIFICADO]:
         flujo.estado = FALLIDO
         flujo.vence_en = None
         flujo.ultimo_error = detalle
+
+
+def al_resumen_en_dlt(flujo: Flujo, momento: datetime, referencia: str, settings: Settings) -> None:
+    """ia-resumen agotó sus reintentos con el comando `GenerarResumen`."""
+    detalle = "ia-resumen no pudo generar el resumen (mensaje enviado a la DLT)"
+    _cerrar_paso(flujo, GENERAR_RESUMEN, "ia-resumen", ERROR, momento, referencia, detalle)
+    if progreso(flujo) < _RANGO_ESTADO[COMPLETADO]:
+        flujo.estado = FALLIDO
+        flujo.vence_en = None
+        flujo.ultimo_error = detalle
+
+
+def al_comando_con_error(
+    flujo: Flujo, paso: str, servicio: str, momento: datetime, referencia: str, detalle: str
+) -> None:
+    """Un comando que no cambia el estado del flujo falló (DLT o sin poder publicarse): queda como paso con error."""
+    flujo.pasos.append(
+        FlujoPaso(
+            paso=paso,
+            servicio=servicio,
+            canal="KAFKA",
+            estado=ERROR,
+            intento=1,
+            iniciado_en=momento,
+            respondido_en=momento,
+            latencia_ms=0,
+            referencia=referencia,
+            detalle_error=detalle[:500],
+        )
+    )
 
 
 class ReintentoNoPermitido(Exception):
@@ -230,12 +281,12 @@ def preparar_reintento(flujo: Flujo, ahora: datetime, settings: Settings) -> Non
 
 
 def al_resumen_no_publicado(flujo: Flujo, detalle: str) -> None:
-    """El orquestador agotó los intentos de publicar `resumen-solicitado`."""
+    """El orquestador agotó los intentos de publicar `GenerarResumen`."""
     if progreso(flujo) >= _RANGO_ESTADO[RESUMEN_PENDIENTE]:
         return  # el pedido llegó igual por otro lado: el flujo ya sigue su curso
     flujo.estado = FALLIDO
     flujo.vence_en = None
-    flujo.ultimo_error = f"No se pudo publicar resumen-solicitado: {detalle}"[:500]
+    flujo.ultimo_error = f"No se pudo publicar GenerarResumen: {detalle}"[:500]
 
 
 def vencer(flujo: Flujo, ahora: datetime) -> None:

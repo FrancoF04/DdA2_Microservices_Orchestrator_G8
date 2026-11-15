@@ -251,14 +251,15 @@ SOLICITADA ──► CONSULTANDO_MULTAS ──► (multas.eventos) ──► ACT
 
 ### 5.1 Tópicos
 
-| Tópico | Rol del orquestador | Fase | Para qué |
-|---|---|---|---|
-| `preformulario-completado` | Consume | F1 | Flujo → `CALIFICACION_PENDIENTE` |
-| `lead-calificado` | Consume | F1 | Flujo → `CALIFICADO` (o paso de corrección) |
-| `resumen-solicitado` | Consume (F1) → **Produce** (F2) | F1/F2 | Flujo → `RESUMEN_PENDIENTE` |
-| `resumen-generado` | Consume | F1 | Flujo → `COMPLETADO` |
-| `preformulario-completado-dlt` | Consume | F1 | Flujo → `FALLIDO` |
-| ~~`orquestador-dlt`~~ | — | — | **Descartado:** el plan free de Aiven permite 5 tópicos y ya están en uso. Ver §5.2. |
+**Esquema actual (tanda B):** tres tópicos. Los cinco tópicos por hecho de las fases 1 y 2 (`preformulario-completado`, `lead-calificado`, `resumen-solicitado`, `resumen-generado` y su DLT) **ya no existen**.
+
+| Tópico | Rol del orquestador | Qué hace |
+|---|---|---|
+| `crm.eventos` | Consume | `PreformularioCompletado` → ordena `CalificarLead` (flujo `CALIFICACION_PENDIENTE`). `LeadCalificado` → ordena `RegistrarCalificacion`, `ActualizarCalificacion` y, la primera vez, `GenerarResumen` (flujo `CALIFICADO`). `ResumenGenerado` → ordena `GuardarResumen` (flujo `COMPLETADO`). Los demás eventos (`ClienteActualizado`, `ClienteAnonimizado`) se ignoran. |
+| `crm.comandos` | **Produce** (solo él) | Las órdenes de arriba, por el outbox. Cada una lleva `destino`. |
+| `crm.dlt` | Consume | El comando que un servicio no pudo procesar. `CalificarLead` o `GenerarResumen` dejan el flujo `FALLIDO`; los demás quedan como paso con error. |
+
+Detalle de cada mensaje: [08-contrato-tres-topicos.md](08-contrato-tres-topicos.md).
 
 - **Grupo consumidor:** `orquestador`, propio, para no robarle mensajes a los demás grupos. Cada grupo recibe su copia completa.
 - **Clave:** `leadId` al publicar, igual que el resto (orden por lead).
@@ -268,6 +269,8 @@ SOLICITADA ──► CONSULTANDO_MULTAS ──► (multas.eventos) ──► ACT
 - **Config:** misma que leads (`SASL_SSL` + `ssl_context` desde `ca.pem`, `KAFKA_ENABLED`, creación de tópicos al arrancar). Si Kafka no está, la API HTTP levanta igual (como ia-resumen) y el estado lo informa `/health`.
 
 ### 5.2 Límite de tópicos de Aiven: esquema de 3 tópicos
+
+**Implementado en la tanda B (2026-11-15); contrato detallado en [08-contrato-tres-topicos.md](08-contrato-tres-topicos.md).**
 
 **Decisión (2026-11-14):** el plan free de Aiven permite **5 tópicos** y ya están todos en uso. El diseño de "un tópico de comandos y otro de eventos por servicio" (§2) no entra: serían unos 16. Se reemplaza por **3 tópicos separados por tipo de mensaje**:
 

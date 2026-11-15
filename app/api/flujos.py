@@ -15,7 +15,8 @@ from app.db.models import Flujo
 from app.db.session import obtener_sessionmaker
 from app.errores import ErrorOrquestador
 from app.flujos import registro_lead as rl
-from app.flujos.despachador import EVENTO_RESUMEN_SOLICITADO, ComandoSaliente, encolar
+from app.flujos import comandos as cmd
+from app.flujos.despachador import encolar
 from app.seguridad.dependencias import requiere_operador
 
 router = APIRouter(
@@ -124,18 +125,12 @@ async def obtener_flujo(flujo_id: uuid.UUID) -> FlujoResponse:
     summary="Volver a pedir el resumen de un lead",
     description=(
         "Para un flujo `REGISTRO_LEAD` ya calificado que no terminó (EXPIRADO, FALLIDO o esperando el "
-        "resumen): deja el flujo en CALIFICADO y encola de nuevo `resumen-solicitado`. Lo publica el "
+        "resumen): deja el flujo en CALIFICADO y encola de nuevo el comando `GenerarResumen`. Lo publica el "
         "despachador en unos segundos. Es idempotente: leads guarda el último resumen que le llega."
     ),
 )
 async def reintentar_flujo(flujo_id: uuid.UUID, request: Request) -> FlujoResponse:
     settings = request.app.state.settings
-    if not settings.orquestador_publica_resumen:
-        raise ErrorOrquestador(
-            409,
-            "DESPACHADOR_APAGADO",
-            "El orquestador no está publicando resumen-solicitado (ORQUESTADOR_PUBLICA_RESUMEN=false).",
-        )
     async with _sessionmaker()() as session, session.begin():
         flujo = (
             await session.execute(
@@ -150,7 +145,7 @@ async def reintentar_flujo(flujo_id: uuid.UUID, request: Request) -> FlujoRespon
             rl.preparar_reintento(flujo, datetime.now(timezone.utc), settings)
         except rl.ReintentoNoPermitido as exc:
             raise ErrorOrquestador(409, exc.codigo, exc.mensaje) from None
-        await encolar(session, flujo, ComandoSaliente(settings.kafka_topico_resumen_solicitado, EVENTO_RESUMEN_SOLICITADO))
+        await encolar(session, flujo, cmd.generar_resumen(settings))
         await session.flush()
         # `actualizado_en` lo recalcula la base al actualizar: se vuelve a leer antes de armar la respuesta.
         await session.refresh(flujo, attribute_names=["actualizado_en"])
