@@ -16,9 +16,9 @@ Lista de lo que hay que cambiar en cada repo del ecosistema para que todo encaje
 
 | Tópico nuevo | Reemplaza a |
 |---|---|
-| `crm.comandos` (orquestador → servicios) | `preformulario-completado` (lado consumidor), `resumen-solicitado` |
-| `crm.eventos` (servicios → orquestador) | `preformulario-completado` (lado productor), `lead-calificado`, `resumen-generado` |
-| `crm.dlt` | `preformulario-completado-dlt` |
+| `crm.comandos` (orquestador → servicios) | `preformulario-completado` (lado consumidor), `resumen-solicitado`, el consumo de `lead-calificado` por clientes (`RegistrarCalificacion`), y el nuevo `ConsultarMultas` |
+| `crm.eventos` (servicios → orquestador) | `preformulario-completado` (lado productor), `lead-calificado`, `resumen-generado`, `cliente-actualizado`, `cliente-anonimizado`, y el nuevo `MultasConsultadas` |
+| `crm.dlt` | `preformulario-completado-dlt`, `lead-calificado.clientes.DLT` |
 
 Qué cambia en cada servicio que usa Kafka:
 
@@ -56,6 +56,9 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 | Fecha | Repos | Cambio |
 |---|---|---|
 | 2026-11-14 | CalificacionMicroservice (#6), VehiculosMicroservice (#19), MonitorMicroservice | Maven Wrapper con Maven 3.9.16: ya no hace falta instalar Maven para correrlos. |
+| 2026-11-14 | CalificacionMicroservice (rama `fix/fecha-lead-calificado-iso`, PR pendiente) | `fecha` de `lead-calificado` como texto ISO-8601 (antes array). Con esto el historial de clientes se llena en el flujo real. |
+| 2026-11-15 | CalificacionMicroservice (misma rama, PR pendiente) | `spring-boot-starter-actuator` y `GET /actuator/health`: el monitor deja de ver a calificacion como `DOWN`. |
+| 2026-11-14 | ClientMicroservice (#8) | Maven Wrapper con Maven 3.9.16 (PR abierta; con esto los cuatro repos Java lo tienen). |
 
 ## Por repo
 
@@ -73,8 +76,10 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 
 | Prioridad | Cambio | Para qué |
 |---|---|---|
+| ✅ Hecho (PR pendiente) | Publicar `fecha` de `lead-calificado` como **texto ISO-8601**, no como array. Rama `fix/fecha-lead-calificado-iso` (`@JsonFormat(shape = STRING)` + test de regresión), verificada de punta a punta: el historial de clientes se llena y la DLT queda vacía. Problema original: Hoy `KafkaTemplate` usa el `JsonSerializer` de Spring Kafka, que escribe `LocalDateTime` como `[2026,11,14,18,56,6,49848900]`. Posible arreglo (a validar por el responsable): construir el `JsonSerializer` con un `ObjectMapper` que tenga `WRITE_DATES_AS_TIMESTAMPS` desactivado (por ejemplo el de Spring), o publicar el JSON ya serializado como `String`. | **Verificado en local (2026-11-14):** clientes rechaza el mensaje (`'fecha' no es una fecha ISO-8601`) y lo manda a `lead-calificado.clientes.DLT`. Mientras tanto el historial de clientes queda **vacío** en el flujo real. (Alternativa: que clientes también acepte el array; conviene corregir el productor, que es el que se aparta del contrato.) |
 | 🔴 Orquestación completa | Pasar a `crm.comandos` / `crm.eventos`. Consumir el comando `CalificarLead` en vez de `preformulario-completado`. | Ídem. |
 | 🟡 | Publicar `lead-calificado` **con el sobre común** (hoy va como JSON plano). | Hoy se pierde el `correlationId` en ese paso: no se puede seguir un flujo de punta a punta con un solo ID. Verificado en local. |
+| ✅ Hecho (PR pendiente) | Faltaba Spring Boot Actuator: `GET /actuator/health` respondía `500` (lo devolvía su `GlobalExceptionHandler` como "No static resource") y el monitor, que sondea esa ruta (`TipoVerificacion.ACTUATOR_HEALTH`), mostraba a calificacion como `DOWN` ("HTTP 500") aunque funcionaba. Se agregó `spring-boot-starter-actuator` (versión del parent) y se expone solo `health`, en la misma rama `fix/fecha-lead-calificado-iso` (commit aparte). | Verificado en local (2026-11-15) con el monitor corriendo: `UP`; y con la base caída, `503 DOWN` y el monitor lo refleja. Sirve también para healthchecks de Docker/Render. |
 | 🟡 | `motivos` como objetos `{regla, puntos, descripcion}` en vez de texto formateado. | Es lo que dice el contrato y lo que necesita el historial de clientes. |
 | 🟡 | Mandar `X-Origen-Servicio: calificacion` en las llamadas a vehiculos y clientes. | Trazabilidad. |
 | 🟡 | Reenviar el `correlationId` del evento recibido como header `X-Correlation-Id` en las llamadas REST a vehiculos y clientes. | Verificado en local: hoy cada llamada sale sin ese header, el orquestador genera un ID nuevo y se pierde el hilo del lead. |
@@ -116,12 +121,48 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 | 🟡 | Rehacer el sondeo de respaldo de la página Monitor (`src/api/monitorClient.js`). | Con las URLs nuevas deja de funcionar. Opciones en [03-despliegue-render.md §4](03-despliegue-render.md#nota-sondeo-de-respaldo-del-front). |
 | ⚪ | Unificar las `VITE_*_API_URL` en una sola (`VITE_API_URL`, que ya existe). | Con el gateway todas valen lo mismo. |
 
-### Servicios nuevos (clientes, auth, scraper de multas)
+### ClientMicroservice (clientes)
 
-Al crearlos conviene que nazcan ya con:
+| Prioridad | Cambio | Para qué |
+|---|---|---|
+| 🔴 Orquestación completa | Pasar a `crm.comandos` / `crm.eventos` / `crm.dlt`: publicar `ClienteActualizado` y `ClienteAnonimizado` en `crm.eventos`; consumir el comando `RegistrarCalificacion` en vez de `lead-calificado`; mandar sus fallidos a `crm.dlt` en vez de `lead-calificado.clientes.DLT`. | Hoy crea 3 tópicos propios que no entran en el plan free de Aiven (límite de 5). |
+| ✅ Hecho en calificacion (PR pendiente) | Ver el cambio de `fecha` en CalificacionMicroservice. Opcional de este lado: aceptar también el array `[año, mes, día, ...]` en `LeadCalificadoTraductor`. | El historial de calificaciones no se llena. |
+| 🟡 | Corregir el comando del README: `mvnw -pl clientes-service -am spring-boot:run` **falla** porque con `-am` Maven corre `spring-boot:run` también sobre el POM padre. Funciona con `mvnw -pl contracts -am install -DskipTests` (una vez) y luego `mvnw -pl clientes-service spring-boot:run`. | Que se pueda levantar siguiendo el README. |
+| 🟡 | Perfil `local` apuntando a la infra compartida (un Postgres con schema por servicio y Kafka en 9092), o un perfil nuevo. Hoy espera la base `clientes_db` y Kafka en el 29092 del compose del propio repo. | Hoy hay que pisarlo con `SPRING_DATASOURCE_URL` y `KAFKA_PUERTO_HOST` (ver [04](04-desarrollo-local.md)). |
+| 🟡 | Mandar `X-Origen-Servicio: clientes` si llegara a llamar a otro servicio. Hoy no llama a ninguno. | Trazabilidad. |
+| 🟡 | `GET /clientes/{id}/historial` y las escrituras del personal quedan sin autenticar hasta que entre **auth**: el orquestador va a protegerlas. | Seguridad. |
+| ⚪ | Que alguien consuma `cliente-actualizado` y `cliente-anonimizado` (leads los necesita para mantener sus copias). | Hoy nadie los lee. |
+
+### InfraccionScrapper (multas)
+
+Hoy es una librería y CLI de Node (consulta la ANSV por patente). Para ser el servicio **multas** del ecosistema le falta:
+
+| Prioridad | Cambio | Para qué |
+|---|---|---|
+| 🔴 Flujo de multas | Un proceso que **consuma el comando `ConsultarMultas`** de `crm.comandos` (ignorando los que no tengan `destino: multas`) y **publique `MultasConsultadas`** (o `ConsultaMultasFallida`) en `crm.eventos`, con el sobre común, el `correlationId` y la clave `vehiculoId`. Aiven y Kafka local con SASL/SSL como el resto. | Es el canal decidido (asincrónico por Kafka). |
+| 🔴 Flujo de multas | **Concurrencia limitada** (arrancar en 1 consulta a la vez) y manejo de los tres errores existentes: `ErrorSitioNoDisponible` (reintentable), `ErrorEstructuraNoReconocida` (no reintentable, alerta) y patente sin multas (resultado válido). | No saturar ni que nos bloqueen el sitio de la ANSV. |
+| 🔴 Ecosistema en Docker / nube | `Dockerfile` basado en la imagen oficial de Playwright (trae Chromium), con usuario no root y versión fijada con digest. | Es el único repo sin imagen; Chromium no entra en un Dockerfile común. Ojo: la memoria del plan free de Render. |
+| 🟡 | Un `GET /health` (o un endpoint mínimo) para el monitor. Aunque el canal sea Kafka, el monitor sondea por HTTP. | Que el monitor y el orquestador vean si está vivo. |
+| 🟡 | Mantener el log sin datos personales (patente, actas, importes), como ya hace la CLI. | Ley 25.326. |
+| 🟡 | `pnpm` como único gestor (hay un `pnpm-workspace.yaml` en camino): `package-lock.json` y los comandos `npm`/`npx` del README pasan a `pnpm`. | Coherencia con el equipo. |
+| ⚪ | Una caché corta por patente. | Menos pedidos a la ANSV. |
+
+Del lado de **vehiculos** (ya en su sección): el campo `patente` y el destino del resultado.
+
+### Servicios nuevos (auth)
+
+**auth** (login del telemarketer, en desarrollo) es el único que todavía no tiene repo. Lo que necesitamos del equipo, para integrarlo sin retrabajo:
+
+- **Puerto** (propongo 8086), `GET /health` y `Dockerfile`.
+- **JWT:** algoritmo (¿RS256 con clave pública o secreto compartido?), claims (`usuario`, `rol`) y duración. El orquestador valida el token **localmente**, sin llamar a auth en cada request.
+- **Endpoints:** `POST /auth/login` y, si aplica, `GET /auth/me`.
+- **Identidad hacia los servicios:** el orquestador inyecta `X-Usuario` (el header que clientes ya lee) y descarta el que venga de afuera.
+- **Impacto en el resto:** pasan a rutas protegidas `GET /leads`, `PATCH /leads/{id}/state`, las calificaciones, las escrituras de clientes y `/api/orquestador/**`. El campo `usuario` de la corrección manual debería salir del token.
+
+Al crearlos (auth) conviene que nazca ya con:
 
 - `GET /health` (o Actuator) y un `Dockerfile`.
 - Kafka con el esquema de 3 tópicos, si lo usan.
 - Errores en formato ProblemDetail y `X-Correlation-Id` propagado.
 - Header `X-Origen-Servicio` en las llamadas que hagan.
-- **clientes:** los 4 endpoints que ya usan los demás. El simulador de este repo ([dev/clientes_simulado](../dev/clientes_simulado/main.py)) muestra exactamente qué devuelve cada uno.
+- Nota: **clientes** ya existe; el simulador de este repo ([dev/clientes_simulado](../dev/clientes_simulado/main.py)) queda solo como opción para probar sin levantar Java.

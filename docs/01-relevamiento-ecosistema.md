@@ -22,12 +22,12 @@ Confirmado por el equipo (2026-11-14): faltan **3** servicios, así que el ecosi
 
 | Servicio | Responsable | Puerto esperado | Qué hace / evidencia |
 |---|---|---|---|
-| **clientes** | Juan | 8082 | Datos personales, CUIL, consentimiento, situación crediticia e historial. Ya lo llaman: leads (`POST /clientes`), calificacion (`GET /clientes/{id}/situacion-crediticia`), ia-resumen y el front (`GET /clientes/{id}`, `GET /clientes/{id}/historial`). |
-| **auth** | a definir | — | Autenticación del **telemarketer** (login). Hoy nada lo referencia: la cola y la corrección manual son públicas, y `usuario` en la corrección viaja libre. |
-| **scraper de multas** | a definir | — | Obtiene deudas por multas asociadas a la **patente** de los **autos en stock**, scrapeando sitios externos. Hoy nada lo referencia y el vehículo **no tiene campo patente**. |
+| **clientes** | Juan | 8082 | Datos personales, CUIL, consentimiento, situación crediticia e historial. **Ya existe** (repo `ClientMicroservice`, Spring Boot): ver §3.7. Lo llaman leads (`POST /clientes`), calificacion (`GET /clientes/{id}/situacion-crediticia`), ia-resumen y el front. |
+| **auth** | en desarrollo | 8086 (propuesto) | Autenticación del **telemarketer** (login). Todavía no hay repo. Hoy la cola y la corrección manual son públicas, y `usuario` en la corrección viaja libre. |
+| **scraper de multas** | en desarrollo | 8087 (propuesto) | Obtiene deudas por multas asociadas a la **patente** de los **autos en stock**. **Existe como librería y CLI** (repo `InfraccionScrapper`, Node): ver §3.9. El servicio y el campo `patente` en vehiculos todavía faltan. |
 
-- El servicio **precalificacion** (SOAP al BCRA) del documento v1.1 **no está en la lista**. O la consulta al BCRA la hace `clientes` directamente, o queda fuera de alcance. **[A confirmar]**
-- Todo lo que se diga de estos 3 servicios es **inferido** y hay que confirmarlo cuando se sumen.
+- El servicio **precalificacion** (SOAP al BCRA) del documento v1.1 **no está en la lista**. clientes lo reemplaza con una fuente **simulada** (modo `simulado`); el adaptador al BCRA (`bcra`) queda para una segunda parte y hoy hace fallar el arranque si se activa. **[A confirmar si se hace]**
+- De estos 3 servicios, **clientes ya es real** (§3.7). **auth** y **multas** siguen siendo inferidos y hay que confirmarlos cuando se sumen.
 
 ## 2. Arquitectura actual en una mirada
 
@@ -220,16 +220,27 @@ Grupo consumidor `resumen-ia-service`.
 
 **Llama a:** `GET` de salud de vehiculos (`/actuator/health`), clientes (`/actuator/health`), leads (`/health` → `/openapi.json`) y calificacion (`/actuator/health`). **No monitorea ia-resumen** ni (obviamente) al orquestador.
 
-### 3.7 clientes* (inferido)
+### 3.7 clientes (repo `ClientMicroservice`)
+
+Java 21 + Spring Boot 3.5, arquitectura hexagonal, PostgreSQL con Flyway (schema `clientes`), puerto 8082, salud en `/actuator/health`, Swagger en `/swagger-ui.html`. Errores en ProblemDetail con `codigo` y `correlationId`. Tiene Maven Wrapper.
 
 | Método | Ruta | Quién lo llama | Auth |
 |---|---|---|---|
-| POST | `/clientes` | leads | `X-Api-Key` (clave de leads) |
-| GET | `/clientes/{id}` | Front, ia-resumen | ¿? (ia-resumen no manda clave) |
-| GET | `/clientes/{id}/situacion-crediticia` | calificacion | `X-Api-Key` (clave de calificacion) |
-| GET | `/clientes/{id}/historial` | Front | ¿? |
+| POST | `/clientes` | leads | `X-Api-Key` (clave de leads). `201` nuevo, `200` ya existía (dedup por CUIL o email) |
+| GET | `/clientes/{id}` | Front, ia-resumen | Ninguna. Devuelve `ETag` |
+| GET | `/clientes?telefono=&email=&q=&provincia=` | Front | Ninguna |
+| PATCH | `/clientes/{id}` | Front (personal) | Exige `If-Match` con el `ETag` (`412` si cambió, `428` si falta). Acepta `X-Usuario` |
+| PUT / DELETE | `/clientes/{id}/no-contactar` | Front (personal) | Ninguna |
+| POST | `/clientes/{id}/anonimizacion` | Front (personal) | El email del cliente en el body como confirmación |
+| GET | `/clientes/{id}/situacion-crediticia` | calificacion | `X-Api-Key` (clave de calificacion). Siempre `200` con `estado` |
+| GET | `/clientes/{id}/historial` | Front | Ninguna |
 
-Kafka: consume `lead-calificado` para registrar el historial. Situación BCRA: a confirmar si la consulta directo o vía otro servicio.
+- **Claves de servicio:** mínimo 32 caracteres y distintas entre sí, o el servicio no arranca. Se validan dentro de clientes, no solo en el gateway.
+- **Datos personales:** es el único servicio que conoce el CUIL (cifrado AES-GCM, enmascarado en las respuestas, nunca en eventos ni logs). Una anonimización borra datos, historial y situación crediticia en una transacción.
+- **Kafka que publica:** `cliente-actualizado` y `cliente-anonimizado` (sobre común, sin datos personales, clave `clienteId`). Hoy **nadie los consume**.
+- **Kafka que consume:** `lead-calificado` (grupo `clientes-historial`, desde `earliest`) para el historial. Acepta JSON plano o con sobre. Los mensajes inválidos y los que fallan tras 5 reintentos van a `lead-calificado.clientes.DLT`.
+- **Situación crediticia:** fuente **simulada** por ahora (el último dígito del DNI decide el resultado), con caché de 30 días en base y circuit breaker.
+- **Problema detectado (2026-11-14, probado en local):** calificacion publica `fecha` como **array** (`[2026,11,14,18,56,6,49848900]`) y clientes exige texto ISO-8601, así que **todos los `lead-calificado` reales van a la DLT** y el historial queda vacío. **Corregido** en calificacion (rama `fix/fecha-lead-calificado-iso`, PR pendiente) y verificado de punta a punta. Ver [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md).
 
 ### 3.8 auth* (inferido)
 
@@ -237,11 +248,17 @@ Kafka: consume `lead-calificado` para registrar el historial. Situación BCRA: a
 - Lo usarían el front, para loguearse y mandar el token, y el orquestador, para validar el token antes de dejar pasar las rutas del telemarketer.
 - Impacto en lo existente: hoy `GET /leads`, `PATCH /leads/{id}/state`, `GET /calificaciones/...`, `POST .../correcciones` y `GET /clientes/...` son públicos. El campo `usuario` de la corrección manual debería salir del token y no del body.
 
-### 3.9 scraper de multas* (inferido)
+### 3.9 scraper de multas (repo `InfraccionScrapper`)
 
-- Recibe una patente y devuelve las deudas por multas.
-- Scraping de sitios externos: **lento, frágil y con riesgo de bloqueo**, así que conviene usarlo de forma asincrónica (Kafka) y con caché.
-- **Decidido:** la patente es de los **autos en stock**. vehiculos tiene que agregar el campo `patente`; hoy no lo tiene. No interviene en el flujo del lead.
+**Estado actual:** librería y CLI de **Node** (Playwright + Cheerio, pnpm), **todavía no es un servicio**: no tiene HTTP, Kafka, `/health` ni Dockerfile.
+
+- **Qué hace:** consulta las infracciones de **una patente** en el sitio público de la ANSV (con un Chromium real) y devuelve `{ dominio, infracciones[], subtotal, mensaje? }`. Cada acta trae `numeroActa`, `importe`, `importeSinDescuento`, `tipoInfraccion`, `lugar` y `juzgado`. El `subtotal` suma los importes sin descuento. Una patente sin multas **no es error** (`infracciones: []`).
+- **Errores diferenciados:** `ErrorValidacionPatente`, `ErrorSitioNoDisponible` y `ErrorEstructuraNoReconocida` (el sitio cambió su HTML).
+- **Datos personales:** las multas de una patente se tratan como dato personal: el log no incluye patente, actas ni importes.
+- **Límites:** una patente por ejecución, lento (abre un navegador), depende de un sitio externo frágil. Hay que **limitar la concurrencia** para no saturarlo ni que nos bloqueen.
+- **Decidido (2026-11-14):** la patente es de los **autos en stock**. vehiculos tiene que agregar el campo `patente`; hoy no lo tiene. No interviene en el flujo del lead.
+- **Decidido (2026-11-14):** el nombre en el ecosistema queda **multas**. Se comunica **por Kafka** (comando y resultado), no por REST.
+- **Lo que le falta para ser servicio:** ver [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md).
 
 ## 4. Mapa completo de comunicación entre servicios
 

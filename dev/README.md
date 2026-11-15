@@ -4,4 +4,4 @@ Nada de esta carpeta se despliega: es solo para el entorno local.
 
 | Carpeta | Qué es |
 |---|---|
-| [`clientes_simulado/`](clientes_simulado/main.py) | Simulador del microservicio `clientes`, que todavía no existe. Sin él falla `POST /leads`. Corre en el compose (`clientes-simulado`, puerto 8082). Cuando esté el servicio real: `docker compose stop clientes-simulado`. |
+| [`clientes_simulado/`](clientes_simulado/main.py) | Simulador del microservicio `clientes`. **Opcional:** si levantás el servicio real (`ClientMicroservice`), no lo uses. Sirve para probar leads o calificacion sin levantar Java. Corre en el compose con `docker compose --profile clientes-simulado up -d` (puerto 8082, el mismo que el real: uno u otro). |
