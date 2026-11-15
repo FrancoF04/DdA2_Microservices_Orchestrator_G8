@@ -1,6 +1,7 @@
 # Infraestructura local compartida por TODO el ecosistema (ver docs/04-desarrollo-local.md).
 #
-#   docker compose up -d                          # Postgres, Kafka, kafka-ui y clientes simulado
+#   docker compose up -d                          # Postgres, Kafka y kafka-ui
+#   docker compose --profile clientes-simulado up -d   # además, el simulador de clientes (opcional)
 #   docker compose --profile orquestador up -d    # además, el orquestador en contenedor
 #
 # Los microservicios (leads, calificacion, vehiculos, etc.) se corren nativos desde
@@ -8,7 +9,7 @@
 #   Postgres  localhost:5432  (base `postgres`, un schema y un usuario por servicio)
 #   Kafka     localhost:9092
 #   kafka-ui  http://localhost:8090
-#   clientes  http://localhost:8082  (simulado, hasta que exista el servicio real)
+#   clientes  http://localhost:8082  (el real, nativo desde ClientMicroservice; el simulador solo si no lo levantás)
 #
 # No levantar a la vez el docker-compose propio de LeadsMicroservice: usa los mismos puertos.
 #
@@ -79,16 +80,20 @@ services:
       kafka:
         condition: service_healthy
 
+  # Opcional: sirve para probar leads o calificacion sin levantar el servicio real. No usarlo junto
+  # con el real: los dos escuchan en el 8082.
   clientes-simulado:
+    profiles: ["clientes-simulado"]
     build:
       context: .
       dockerfile: dev/clientes_simulado/Dockerfile
     image: clientes-simulado:local
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      # Mismas claves que usan leads y calificacion en su .env local (ver docs/04).
-      CLIENTES_CLAVE_LEADS: clave-local-leads
-      CLIENTES_CLAVE_CALIFICACION: clave-local-calificacion
+      # Mismas claves que el perfil `local` del servicio real (ver docs/04), así leads y
+      # calificacion no cambian su .env al pasar de uno al otro.
+      CLIENTES_CLAVE_LEADS: solo-local-clave-de-servicio-leads-0001
+      CLIENTES_CLAVE_CALIFICACION: solo-local-clave-de-servicio-calificacion-0001
     ports:
       - "8082:8082"
     depends_on:
@@ -105,7 +110,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       # Desde el contenedor, los servicios nativos se alcanzan por host.docker.internal.
       LEADS_URL: http://host.docker.internal:8000
-      CLIENTES_URL: http://clientes-simulado:8082
+      CLIENTES_URL: http://host.docker.internal:8082
       VEHICULOS_URL: http://host.docker.internal:8083
       CALIFICACION_URL: http://host.docker.internal:8084
       MONITOR_URL: http://host.docker.internal:8085

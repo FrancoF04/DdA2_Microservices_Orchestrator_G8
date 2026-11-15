@@ -11,7 +11,7 @@ La documentación de diseño está en [docs/](docs/README.md).
 
 ## Entorno local
 
-Este repo trae la **infraestructura local de todo el ecosistema**: Postgres (un schema por servicio), Kafka, kafka-ui y un simulador de `clientes`. Los servicios se corren nativos desde su propio repo. La guía completa, con el `.env` de cada repo, está en [docs/04-desarrollo-local.md](docs/04-desarrollo-local.md).
+Este repo trae la **infraestructura local de todo el ecosistema**: Postgres (un schema por servicio), Kafka, kafka-ui y, opcional, un simulador de `clientes` (hay servicio real). Los servicios se corren nativos desde su propio repo. La guía completa, con el `.env` de cada repo, está en [docs/04-desarrollo-local.md](docs/04-desarrollo-local.md).
 
 ```bash
 docker compose up -d          # infraestructura
