@@ -240,7 +240,7 @@ Java 21 + Spring Boot 3.5, arquitectura hexagonal, PostgreSQL con Flyway (schema
 - **Kafka que publica:** `cliente-actualizado` y `cliente-anonimizado` (sobre común, sin datos personales, clave `clienteId`). Hoy **nadie los consume**.
 - **Kafka que consume:** `lead-calificado` (grupo `clientes-historial`, desde `earliest`) para el historial. Acepta JSON plano o con sobre. Los mensajes inválidos y los que fallan tras 5 reintentos van a `lead-calificado.clientes.DLT`.
 - **Situación crediticia:** fuente **simulada** por ahora (el último dígito del DNI decide el resultado), con caché de 30 días en base y circuit breaker.
-- **Problema detectado (2026-11-14, probado en local):** calificacion publica `fecha` como **array** (`[2026,11,14,18,56,6,49848900]`) y clientes exige texto ISO-8601, así que **todos los `lead-calificado` reales van a la DLT** y el historial queda vacío. Ver [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md).
+- **Problema detectado (2026-11-14, probado en local):** calificacion publica `fecha` como **array** (`[2026,11,14,18,56,6,49848900]`) y clientes exige texto ISO-8601, así que **todos los `lead-calificado` reales van a la DLT** y el historial queda vacío. **Corregido** en calificacion (rama `fix/fecha-lead-calificado-iso`, PR pendiente) y verificado de punta a punta. Ver [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md).
 
 ### 3.8 auth* (inferido)
 

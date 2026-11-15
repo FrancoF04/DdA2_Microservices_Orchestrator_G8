@@ -184,7 +184,7 @@ Ya existe y está probado detrás del proxy (alta con clave, ficha con `ETag`, `
 | K2 consume `lead-calificado` | Igual; el orquestador también lo escucha. En el objetivo final pasa a ser el comando `RegistrarCalificacion` en `crm.comandos` | F1 / final | Pasar a 3 tópicos |
 | Publica `cliente-actualizado` y `cliente-anonimizado` | Nadie los consume hoy. leads los necesita para mantener sus copias; en el objetivo final pasan a `crm.eventos` y el orquestador decide a quién avisar | final | Pasar a 3 tópicos |
 | DLT propia `lead-calificado.clientes.DLT` | Pasa a `crm.dlt` | final | Pasar a 3 tópicos |
-| Formato de `fecha` de `lead-calificado` | **Hoy incompatible** con calificacion (array vs ISO-8601): todo va a la DLT. Hay que corregirlo antes de la prueba completa | F1 | Ver [05](05-cambios-en-otros-repos.md) |
+| Formato de `fecha` de `lead-calificado` | Era incompatible con calificacion (array vs ISO-8601) y todo iba a la DLT. **Corregido** en calificacion (rama `fix/fecha-lead-calificado-iso`, PR pendiente) | F1 | Ver [05](05-cambios-en-otros-repos.md) |
 
 Las escrituras del personal (`PATCH`, no contactar, anonimización) hoy no piden clave porque no hay autenticación: cuando entre **auth** (§4.8) pasan a ser rutas protegidas y el orquestador inyecta `X-Usuario`.
 
