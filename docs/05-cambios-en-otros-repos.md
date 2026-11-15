@@ -120,10 +120,9 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 
 | Prioridad | Cambio | Para qué |
 |---|---|---|
-| 🔴 Pasar el tráfico por el orquestador | Apuntar las `VITE_*_API_URL` al orquestador (`<orq>/api`). | Sin esto el front sigue llamando a cada servicio directo. |
-| 🔴 Login del operador | Pantalla de login (`POST /api/auth/login`); guardar `access_token` y `refresh_token`; mandar `Authorization: Bearer` en cada pedido; cuando llega `401` con `codigo: TOKEN_EXPIRADO`, llamar a `POST /api/auth/refresh`, guardar el par nuevo y **reintentar** el pedido (si el refresh falla, volver al login); logout con `POST /api/auth/logout`. El preformulario y el catálogo de vehículos **siguen sin login**. | Sin esto, la cola, la ficha del lead y la corrección reciben `401`. Ver [06-autenticacion.md](06-autenticacion.md). |
+| ✅ Hecho (rama `feat/login-operador`) | El front pasa todo por el orquestador (`VITE_API_URL`) y tiene login del operador: `axiosClient` manda `Authorization: Bearer`, renueva con `POST /api/auth/refresh` ante `401 TOKEN_EXPIRADO` y reintenta, vuelve al login si el refresh falla o el token fue revocado, y cierra sesión con `POST /api/auth/logout`. La cola (`/cola`) pide login; el preformulario y el catálogo de vehículos no. | Ver [06-autenticacion.md](06-autenticacion.md). Falta probarlo en el navegador. |
 | 🟡 | Rehacer el sondeo de respaldo de la página Monitor (`src/api/monitorClient.js`). | Con las URLs nuevas deja de funcionar. Opciones en [03-despliegue-render.md §4](03-despliegue-render.md#nota-sondeo-de-respaldo-del-front). |
-| ⚪ | Unificar las `VITE_*_API_URL` en una sola (`VITE_API_URL`, que ya existe). | Con el gateway todas valen lo mismo. |
+| ⚪ | Si se despliega el orquestador, `/monitor` (que sigue llamando directo al servicio monitor con `VITE_MONITOR_API_URL`) puede pasar a `/api/monitor` y pedir login. | Hoy el Health Dashboard no exige sesión. |
 
 ### ClientMicroservice (clientes)
 
