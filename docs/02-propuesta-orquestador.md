@@ -120,11 +120,11 @@ Mientras tanto, a futuro, todas las `VITE_*_API_URL` podrían colapsar en `VITE_
 | R6 `POST /clientes` | Vía `/api/clientes` | F1 | `CLIENTES_URL=<orq>/api` |
 | K1 publica `preformulario-completado` | Sigue publicando leads; el orquestador **escucha** y avanza el flujo | F1 | Ninguno |
 | K2 consume `lead-calificado` | Igual | — | Ninguno |
-| K3 publica `resumen-solicitado` | **Pasa al orquestador**: cuando ve `lead-calificado`, él publica `resumen-solicitado` con el mismo contrato | F2 | Quitar `publish_resumen_solicitado` del consumer (o ponerlo detrás de un flag) |
+| K3 publica `resumen-solicitado` | **Pasa al orquestador** ✅ (tanda A): cuando ve `lead-calificado`, él publica `resumen-solicitado` con el mismo contrato | F2 | `publish_resumen_solicitado` quedó detrás de `LEADS_PUBLICA_RESUMEN` (`true` por defecto; se pasa a `false` al encender el orquestador) |
 | K4 consume `resumen-generado` | Igual | — | Ninguno |
-| Salud | El orquestador necesita un `/health` | F2 | Agregar `GET /health` (resuelve I8) |
+| Salud | El orquestador necesita un `/health` | F2 | `GET /health` agregado ✅ (resuelve I8) |
 
-En la fase 2, para que el orquestador pueda armar `resumen-solicitado` sin consultar a leads, el flujo guarda los datos comerciales del paso (`anticipo`, `permuta`, `ubicacion`, etc.) del `preformulario-completado`. Se guardan solo mientras el flujo está activo (§6.3). La otra opción es que el orquestador haga `GET /leads/{id}` en ese momento, que es más simple y no duplica datos. **Recomendado: `GET /leads/{id}`.**
+Para armar `resumen-solicitado` el orquestador **consulta `GET /leads/{id}` al momento de publicar** (decisión tomada e implementada en la tanda A): no guarda datos comerciales en su base. Llama directo a `LEADS_URL` identificándose con `X-Origen-Servicio: orquestador` y el correlation id del flujo; leads no exige credenciales en sus endpoints (el gateway es la capa de autenticación), por eso no usa una clave de servicio. El payload es el mismo que armaba leads (`app/flujos/resumen.py`).
 
 ### 4.3 calificacion — `CalificacionMicroservice`
 
@@ -388,7 +388,7 @@ outbox                    (fase 2: publicación confiable de comandos)
 
 - **Sí:** estados, pasos, tiempos, códigos, IDs (UUID de lead/cliente/vehículo, que no son datos personales), mensajes de error técnicos.
 - **No:** cuerpos de request/response, nombre, email, teléfono, CUIL, montos. En el happy path la base solo recibe unos pocos `INSERT`/`UPDATE` por lead.
-- `outbox.mensaje` (fase 2) es la única excepción: contiene el payload del comando a publicar (datos comerciales, sin datos personales, igual que hoy viajan por Kafka). Se purga al publicarse.
+- `outbox.mensaje` guarda solo a qué lead se refiere el comando (`eventType`, `leadId`, `correlationId`): los datos comerciales se consultan a leads al publicar, así que **no hay excepción**: tampoco el outbox guarda datos de negocio.
 
 ### 6.4 Máquina de estados: flujo `REGISTRO_LEAD`
 
@@ -431,7 +431,7 @@ outbox                    (fase 2: publicación confiable de comandos)
 |---|---|
 | **Se cae el orquestador** | Al volver, el consumidor Kafka retoma desde el último offset confirmado y avanza los flujos con los eventos acumulados. Las requests HTTP en vuelo se pierden; el que llamó recibe error y reintenta, como hoy. |
 | **Se cae calificacion** | Los K1 esperan en Kafka. Los flujos quedan en `CALIFICACION_PENDIENTE` y, al vencer, pasan a `EXPIRADO` con alerta. Cuando calificacion vuelve y publica K2, el flujo **sale de `EXPIRADO`** y sigue. |
-| **Se cae ia-resumen** | Igual, en `RESUMEN_PENDIENTE`. En F2 el orquestador puede **re-publicar** `resumen-solicitado` (`POST /api/orquestador/flujos/{id}/reintentar`); como leads sobrescribe el resumen, repetir es seguro. |
+| **Se cae ia-resumen** | Igual, en `RESUMEN_PENDIENTE`. El orquestador puede **re-publicar** `resumen-solicitado` (`POST /api/orquestador/flujos/{id}/reintentar`, tanda A ✅); como leads sobrescribe el resumen, repetir es seguro. |
 | **Se cae un servicio en una llamada REST** | El proxy registra `503`/`504` en `llamada_servicio`; la tasa de errores por servicio se ve en `GET /api/orquestador/servicios`. |
 | **Mensaje duplicado** | `evento_procesado` lo descarta (RNF-04). |
 
@@ -547,16 +547,16 @@ AUDITORIA_RETENCION_DIAS=7
 | **0. Esqueleto** | FastAPI + `/health` + Dockerfile + compose + config + Alembic con las tablas | Ninguno |
 | **1a. Proxy** ✅ | `/api/{servicio}/**` con correlation id, auditoría en `llamada_servicio` y `/api/orquestador/servicios`. Despliegue en Render: [03-despliegue-render.md](03-despliegue-render.md) | Solo URLs en `.env` (front, leads, calificacion, ia-resumen) |
 | **1b. Seguimiento de flujos** ✅ | Consumir K1–K5, máquina `REGISTRO_LEAD`, timeouts y `/api/orquestador/flujos` | Ninguno |
-| **2. Orquestación real** | El orquestador publica `resumen-solicitado` (outbox), reintentos manuales, inyección de `X-Api-Key`, `X-Origen-Servicio` | leads deja de publicar K3; leads agrega `/health`; monitor suma orquestador e ia-resumen; calificacion publica con sobre (recomendado) |
+| **2. Orquestación real** (tanda A ✅ en rama `feature/orquestacion-tanda-a`: `resumen-solicitado` con outbox y reintento manual; falta la inyección de `X-Api-Key`) | El orquestador publica `resumen-solicitado` (outbox), reintentos manuales, inyección de `X-Api-Key`, `X-Origen-Servicio` | leads deja de publicar K3; leads agrega `/health`; monitor suma orquestador e ia-resumen; calificacion publica con sobre (recomendado) |
 | **3. Nuevos servicios** | clientes y auth (validación de JWT en el orquestador) al ruteo; flujo `CONSULTA_MULTAS_VEHICULO` con el scraper y vehiculos | Los de esos repos; el front agrega login |
 | **4. Orquestación completa** | Tópicos de comandos y eventos por servicio; ningún servicio escucha a otro | Todos: cambiar qué tópico escucha y en cuál publica cada uno |
 
 ## 9. Decisiones abiertas para el equipo
 
 1. ~~¿El orquestador reemplaza al API Gateway del documento (AD-10)?~~ **Resuelto (2026-11-14): sí.** El orquestador es el API Gateway del proyecto: puerto 8080, prefijo `/api`. Falta registrarlo como AD-16 en el documento de arquitectura.
-2. **Fase 2 de `resumen-solicitado`:** ¿se acepta que leads deje de publicarlo? Es el único cambio de código obligatorio en otro repo para que haya orquestación real.
+2. ~~**Fase 2 de `resumen-solicitado`:** ¿se acepta que leads deje de publicarlo?~~ **Resuelto (2026-11-15): sí.** Lo publica el orquestador con el mismo contrato; leads lo hace solo si `LEADS_PUBLICA_RESUMEN=true` (por defecto, para el período de pase).
 3. ~~**Autenticación servicio → orquestador:** ¿pass-through de `X-Api-Key` o claves por servicio?~~ **Resuelto (2026-11-15): claves por servicio.** Cada servicio manda `X-Origen-Servicio` + `X-Clave-Servicio`; el orquestador las valida, permite solo los recursos de cada uno y registra el origen verificado. La `X-Api-Key` del destino sigue de largo (dos capas). Ver [06 §4](06-autenticacion.md).
-4. **Correcciones manuales:** ¿una corrección debe volver a generar el resumen de la IA?
+4. ~~**Correcciones manuales:** ¿una corrección debe volver a generar el resumen de la IA?~~ **Resuelto (2026-11-15): no.** El resumen de ia-resumen se arma con datos del lead (nombre, vehículo, anticipo, permuta, ubicación, financiación), no con nivel, puntaje ni motivos. Si algún día incluye la calificación, hay que revisar esto.
 5. **Sobre de eventos:** ¿se normaliza en todos los servicios al formato del documento (`version`, `occurredAt`) o el orquestador se queda tolerando las variantes?
 6. **Base:** confirmar con el responsable de Supabase (Naim) la creación del schema `orquestador` y del rol `orquestador_app`, y el presupuesto de conexiones del pooler.
 7. **Kafka:** confirmar el mecanismo SASL de Aiven (`PLAIN` o `SCRAM-SHA-256`, I12) y cómo se hace el pase a los 3 tópicos (§5.2).

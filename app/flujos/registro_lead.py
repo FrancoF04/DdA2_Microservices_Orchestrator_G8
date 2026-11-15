@@ -59,7 +59,7 @@ _RANGO_PASO = {
 
 _MOTIVO_VENCIMIENTO = {
     CALIFICACION_PENDIENTE: "calificacion no respondió a tiempo (no llegó lead-calificado)",
-    CALIFICADO: "leads no pidió el resumen a tiempo (no llegó resumen-solicitado)",
+    CALIFICADO: "no se pidió el resumen a tiempo (no se publicó resumen-solicitado)",
     RESUMEN_PENDIENTE: "ia-resumen no respondió a tiempo (no llegó resumen-generado)",
 }
 
@@ -87,6 +87,7 @@ def _abrir_paso(flujo: Flujo, nombre: str, servicio: str, momento: datetime, ref
                 servicio=servicio,
                 canal="KAFKA",
                 estado=PENDIENTE,
+                intento=1,
                 iniciado_en=momento,
                 referencia=referencia,
             )
@@ -139,7 +140,13 @@ def al_preformulario_completado(flujo: Flujo, momento: datetime, referencia: str
 
 def al_lead_calificado(
     flujo: Flujo, momento: datetime, referencia: str, origen: Optional[str], settings: Settings
-) -> None:
+) -> bool:
+    """Aplica `lead-calificado`. Devuelve True si hay que pedir el resumen a ia-resumen.
+
+    Se pide una sola vez por flujo: ni una corrección manual ni una calificación
+    repetida, con el resumen ya pedido, lo vuelven a pedir.
+    """
+    ya_pedido = progreso(flujo) >= _RANGO_ESTADO[RESUMEN_PENDIENTE]
     if (origen or "").upper() == "MANUAL" and progreso(flujo) >= _RANGO_ESTADO[CALIFICADO]:
         flujo.pasos.append(
             FlujoPaso(
@@ -153,15 +160,32 @@ def al_lead_calificado(
                 referencia=referencia,
             )
         )
-        return
+        return False
     _cerrar_paso(flujo, CALIFICAR_LEAD, "calificacion", OK, momento, referencia)
-    # Después de calificar, leads tiene que pedir el resumen: se espera con el mismo plazo.
+    # Después de calificar hay que pedir el resumen (lo publica el orquestador o, con el
+    # despachador apagado, leads): se espera con el mismo plazo que el resumen.
     vence = momento + timedelta(seconds=settings.flujo_timeout_resumen_segundos)
     _avanzar(flujo, CALIFICADO, vence, None)
+    return not ya_pedido
 
 
 def al_resumen_solicitado(flujo: Flujo, momento: datetime, referencia: str, settings: Settings) -> None:
-    _abrir_paso(flujo, GENERAR_RESUMEN, "ia-resumen", momento, referencia)
+    previo = _paso(flujo, GENERAR_RESUMEN)
+    if previo is not None and previo.estado in (TIMEOUT, ERROR):
+        # Un pedido nuevo después de un fallo (reintento): intento aparte, con su propia latencia.
+        flujo.pasos.append(
+            FlujoPaso(
+                paso=GENERAR_RESUMEN,
+                servicio="ia-resumen",
+                canal="KAFKA",
+                estado=PENDIENTE,
+                intento=(previo.intento or 1) + 1,
+                iniciado_en=momento,
+                referencia=referencia,
+            )
+        )
+    else:
+        _abrir_paso(flujo, GENERAR_RESUMEN, "ia-resumen", momento, referencia)
     vence = momento + timedelta(seconds=settings.flujo_timeout_resumen_segundos)
     _avanzar(flujo, RESUMEN_PENDIENTE, vence, GENERAR_RESUMEN)
 
@@ -179,6 +203,39 @@ def al_preformulario_en_dlt(flujo: Flujo, momento: datetime, referencia: str, se
         flujo.estado = FALLIDO
         flujo.vence_en = None
         flujo.ultimo_error = detalle
+
+
+class ReintentoNoPermitido(Exception):
+    """El flujo no está en un estado desde el que se pueda volver a pedir el resumen."""
+
+    def __init__(self, codigo: str, mensaje: str) -> None:
+        super().__init__(mensaje)
+        self.codigo = codigo
+        self.mensaje = mensaje
+
+
+def preparar_reintento(flujo: Flujo, ahora: datetime, settings: Settings) -> None:
+    """Deja el flujo esperando que se vuelva a publicar `resumen-solicitado`."""
+    if flujo.estado == COMPLETADO:
+        raise ReintentoNoPermitido("FLUJO_COMPLETADO", "El flujo ya terminó: el resumen ya fue generado.")
+    if progreso(flujo) < _RANGO_ESTADO[CALIFICADO]:
+        raise ReintentoNoPermitido(
+            "FLUJO_SIN_CALIFICAR", "El lead todavía no fue calificado: no hay un resumen que pedir."
+        )
+    flujo.estado = CALIFICADO
+    flujo.paso_actual = None
+    flujo.vence_en = ahora + timedelta(seconds=settings.flujo_timeout_resumen_segundos)
+    flujo.ultimo_error = None
+    flujo.finalizado_en = None
+
+
+def al_resumen_no_publicado(flujo: Flujo, detalle: str) -> None:
+    """El orquestador agotó los intentos de publicar `resumen-solicitado`."""
+    if progreso(flujo) >= _RANGO_ESTADO[RESUMEN_PENDIENTE]:
+        return  # el pedido llegó igual por otro lado: el flujo ya sigue su curso
+    flujo.estado = FALLIDO
+    flujo.vence_en = None
+    flujo.ultimo_error = f"No se pudo publicar resumen-solicitado: {detalle}"[:500]
 
 
 def vencer(flujo: Flujo, ahora: datetime) -> None:

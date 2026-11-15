@@ -61,6 +61,19 @@ class Settings(BaseSettings):
     kafka_topico_resumen_generado: str = "resumen-generado"
     kafka_topico_preformulario_dlt: str = "preformulario-completado-dlt"
 
+    # --- orquestación (tanda A) ---
+    # Si está encendido, el orquestador publica `resumen-solicitado` cuando el lead queda
+    # calificado, y leads tiene que dejar de hacerlo (si no, el resumen se pide dos veces).
+    # Apagado, el orquestador solo observa el flujo, como en la fase 1b.
+    orquestador_publica_resumen: bool = False
+    # Intentos de publicar un comando antes de abandonarlo (el flujo queda FALLIDO) y espera
+    # entre intentos: base * 2^(intento-1), con tope.
+    outbox_max_intentos: int = 5
+    outbox_espera_base_segundos: float = 5.0
+    outbox_espera_maxima_segundos: float = 300.0
+    # Cada cuánto el despachador mira el outbox.
+    outbox_intervalo_segundos: float = 2.0
+
     # --- flujos ---
     # Tiempo máximo de cada paso antes de marcar el flujo como EXPIRADO.
     flujo_timeout_calificacion_segundos: int = 120

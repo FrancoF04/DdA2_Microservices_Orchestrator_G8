@@ -55,6 +55,8 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 
 | Fecha | Repos | Cambio |
 |---|---|---|
+| 2026-11-15 | LeadsMicroservice (rama `feat/resumen-lo-publica-el-orquestador`, sin PR todavía) | `LEADS_PUBLICA_RESUMEN` (por defecto `true`, igual que hoy): con `false` leads ya no publica `resumen-solicitado` porque lo hace el orquestador. Además `GET /health` (`UP`, o 503 `DOWN` si la base no responde). |
+| 2026-11-15 | MonitorMicroservice (rama `feat/objetivos-orquestador-auth-ia`, sin PR todavía) | Suma como objetivos al orquestador (`/health`), ia-resumen (`/openapi.json`) y auth (`/health`). Variables `ORQUESTADOR_SERVICE_URL`, `IA_RESUMEN_SERVICE_URL`, `AUTH_SERVICE_URL`. |
 | 2026-11-14 | CalificacionMicroservice (#6), VehiculosMicroservice (#19), MonitorMicroservice | Maven Wrapper con Maven 3.9.16: ya no hace falta instalar Maven para correrlos. |
 | 2026-11-14 | CalificacionMicroservice (rama `fix/fecha-lead-calificado-iso`, PR pendiente) | `fecha` de `lead-calificado` como texto ISO-8601 (antes array). Con esto el historial de clientes se llena en el flujo real. |
 | 2026-11-15 | CalificacionMicroservice (misma rama, PR pendiente) | `spring-boot-starter-actuator` y `GET /actuator/health`: el monitor deja de ver a calificacion como `DOWN`. |
@@ -70,7 +72,7 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 | Prioridad | Cambio | Para qué |
 |---|---|---|
 | 🔴 Orquestación completa | Pasar a `crm.comandos` / `crm.eventos` (ver arriba). Deja de publicar `resumen-solicitado`: ese paso lo decide el orquestador. | Que el flujo viva en el orquestador. |
-| 🟡 | Agregar `GET /health` (ej. `{"status": "UP"}`). | Hoy el monitor y el front caen a `/openapi.json` para saber si está vivo. |
+| ✅ | `GET /health` (hecho, rama `feat/resumen-lo-publica-el-orquestador`). | El monitor ya lo usa; antes caía a `/openapi.json`. |
 | 🟡 | Mandar `X-Origen-Servicio: leads` en la llamada a clientes. | Que el orquestador sepa quién llama (hoy figura `desconocido`). |
 | ⚪ | En `.env.example`: usar `postgresql+psycopg://` en `DATABASE_URL` y sacar `CLIENT_MICROSERVICE`, `VEHICLE_MICROSERVICE` y `BCRA_API`, que no se usan. | Evitar confusiones al levantarlo. |
 | ⚪ | Fijar versiones en `requirements.txt`. | Hoy instala la última de cada paquete. |
@@ -111,7 +113,7 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 
 | Prioridad | Cambio | Para qué |
 |---|---|---|
-| 🟡 | Sumar como objetivos al **orquestador** (`/health`) y a **ia-resumen** (`/openapi.json`). Después, a auth, clientes real y multas. | Hoy no los vigila. |
+| ✅ | Objetivos **orquestador**, **ia-resumen** y **auth** (hecho, rama `feat/objetivos-orquestador-auth-ia`). Quedan clientes real (ya figura) y multas cuando exista. | El orquestador reporta `"status": "DOWN"` en su `/health` si la base o Kafka están caídos, y el monitor lo marca DOWN. |
 | ⚪ | Usar Postgres en vez de H2 en memoria (ya lo soporta por variables). | Hoy pierde el historial en cada reinicio. |
 
 **No cambiar:** el monitor tiene que seguir sondeando a cada servicio **directo**, no a través del orquestador.

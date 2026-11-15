@@ -46,6 +46,11 @@ class ClienteKafka:
         self._tarea_conexion: Optional[asyncio.Task] = None
         self._tarea_consumo: Optional[asyncio.Task] = None
 
+    @property
+    def disponible(self) -> bool:
+        """True si ya se puede publicar (el producer está conectado)."""
+        return self.producer is not None
+
     # ------------------------------------------------------------------ ciclo de vida
 
     async def iniciar(self) -> None:
