@@ -46,7 +46,7 @@ Todos los mensajes, sin excepción, van con el sobre común. `destino` va **solo
 | `CalificarLead` | `calificacion` | Al llegar `PreformularioCompletado` | El mismo payload de `PreformularioCompletado` (§4) |
 | `RegistrarCalificacion` | `clientes` | Al llegar `LeadCalificado` (automático o manual) | El mismo payload de `LeadCalificado` (§4) |
 | `ActualizarCalificacion` | `leads` | Al llegar `LeadCalificado` (automático o manual) | El mismo payload de `LeadCalificado` (§4) |
-| `GenerarResumen` | `ia-resumen` | Al llegar el primer `LeadCalificado` automático (una corrección manual **no** regenera el resumen) | El que hoy lleva `resumen-solicitado`: `leadId`, `clienteId`, `vehiculoId`, `anticipo`, `solicitaFinanciacion`, `permuta{tienePermuta, descripcion, valorDeclarado}`, `ubicacion{provincia, localidad}`. El orquestador lo arma con `GET /leads/{id}` |
+| `GenerarResumen` | `ia-resumen` | Al llegar el primer `LeadCalificado` automático (una corrección manual **no** regenera el resumen) | El que hoy lleva `resumen-solicitado`: `leadId`, `clienteId`, `vehiculoId`, `anticipo`, `solicitaFinanciacion`, `patente` (opcional), `permuta{tienePermuta, descripcion, valorDeclarado}`, `ubicacion{provincia, localidad}`. El orquestador lo arma con `GET /leads/{id}` |
 | `GuardarResumen` | `leads` | Al llegar `ResumenGenerado` | `leadId`, `resumen` |
 | `ConsultarMultas` | `multas` | Al abrir una consulta (pedido manual o barrido; §7) y al reintentar un error reintentable del scraper | `vehiculoId`, `patente`. El orquestador la consulta a vehiculos al publicar. La clave del mensaje es el `vehiculoId` |
 
@@ -64,7 +64,7 @@ Qué hace cada servicio al recibirlo es lo mismo que hace hoy con el tópico vie
 
 | `eventType` | Publica | Payload |
 |---|---|---|
-| `PreformularioCompletado` | leads | `leadId`, `clienteId`, `vehiculoId`, `montoAnticipo`, `montoPermuta`, `permutaNoComputable`, `solicitaFinanciacion`, `ubicacion` (igual que hoy) |
+| `PreformularioCompletado` | leads | `leadId`, `clienteId`, `vehiculoId`, `montoAnticipo`, `montoPermuta`, `permutaNoComputable`, `solicitaFinanciacion`, `ubicacion`, `patente` (opcional, patente del vehículo en parte de pago tipeada por el prospecto) |
 | `LeadCalificado` | calificacion | `leadId`, `clienteId`, `puntos`, `nivel`, `origen` (`AUTOMATICA` / `MANUAL`), `fecha` (ISO texto), `observacion`, `motivos[]` (igual que hoy, **ahora con sobre**) |
 | `ResumenGenerado` | ia-resumen | `leadId`, `resumen` (igual que hoy) |
 | `MultasConsultadas` | multas | `vehiculoId`, `dominio`, `infracciones[]` (`numeroActa`, `dominio`, `importe`, `importeSinDescuento`, `tipoInfraccion`, `lugar`, `juzgado`), `subtotal`, `mensaje` opcional. Una patente sin multas es un resultado válido (`infracciones: []`). Clave del mensaje: `vehiculoId` |

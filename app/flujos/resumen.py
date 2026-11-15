@@ -23,6 +23,7 @@ def armar_payload_resumen(lead: dict[str, Any]) -> dict[str, Any]:
         "vehiculoId": str(lead["vehiculo_id"]),
         "anticipo": lead["anticipo"],
         "solicitaFinanciacion": lead["solicita_financiacion"],
+        "patente": lead.get("patente"),
         "permuta": {
             "tienePermuta": lead["permuta_tiene"],
             "descripcion": lead.get("permuta_descripcion"),
