@@ -55,15 +55,10 @@ def crear_app(
             # Seguimiento de flujos (fase 1b): sin base no hay dónde guardarlos.
             servicio_flujos.registrar_manejadores(settings)
             tareas.append(asyncio.create_task(servicio_flujos.vencer_periodicamente(settings)))
-            if settings.orquestador_publica_resumen:
-                # Tanda A: el orquestador publica resumen-solicitado (outbox + despachador).
-                tareas.append(
-                    asyncio.create_task(
-                        despachador.despachar_periodicamente(settings, app.state.kafka, app.state.http)
-                    )
-                )
-            else:
-                logger.info("ORQUESTADOR_PUBLICA_RESUMEN=false: leads sigue publicando resumen-solicitado.")
+            # El orquestador dirige el flujo: publica los comandos del outbox en crm.comandos.
+            tareas.append(
+                asyncio.create_task(despachador.despachar_periodicamente(settings, app.state.kafka, app.state.http))
+            )
         await app.state.kafka.iniciar()
         try:
             yield

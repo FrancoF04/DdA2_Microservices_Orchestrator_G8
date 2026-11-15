@@ -45,10 +45,13 @@ services:
       - key: CLAVES_SERVICIO
         sync: false           # leads=<clave>,calificacion=<clave>,ia-resumen=<clave> (32+ caracteres c/u)
 
-      # --- orquestación (tanda A) ---
-      # "true" solo cuando leads ya tenga LEADS_PUBLICA_RESUMEN=false (si no, el resumen se pide dos veces).
-      - key: ORQUESTADOR_PUBLICA_RESUMEN
-        value: "false"
+      # --- tópicos (docs/08-contrato-tres-topicos.md): los mismos nombres en todos los servicios ---
+      - key: KAFKA_TOPICO_COMANDOS
+        value: crm.comandos
+      - key: KAFKA_TOPICO_EVENTOS
+        value: crm.eventos
+      - key: KAFKA_TOPICO_DLT
+        value: crm.dlt
 
       # --- base de datos (Supabase, session pooler 5432) ---
       - key: DATABASE_URL

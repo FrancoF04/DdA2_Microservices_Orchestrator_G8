@@ -93,19 +93,39 @@ Hecho en las tres ramas; los tres repos con cambios sin commit hasta que el usua
 - Las filas publicadas del outbox no se purgan (solo guardan ids; falta una retención como la de `auditoria_retencion_dias`).
 - Si leads está caído mucho tiempo (más de ~75 s con los valores por defecto) el flujo queda `FALLIDO`; se recupera con el reintento manual.
 
-## 4. Tanda B: tres tópicos (Fase 4), para después
+## 4. Tanda B: tres tópicos (implementada el 2026-11-15, sin commitear)
 
-Un solo cambio coordinado en todos los repos (Aiven free permite 5 tópicos):
+Decisiones del usuario: **corte duro** (sin modo dual: cada repo cambia en su rama, se prueba todo junto y se despliega el mismo día) y **contrato + orquestador primero**. El contrato está en [08-contrato-tres-topicos.md](08-contrato-tres-topicos.md).
 
-| Tópico | Quién publica | Quién lee |
+| Repo | Rama | Qué cambia |
 |---|---|---|
-| `crm.comandos` | solo el orquestador | todos los servicios (cada uno con su grupo; ignoran los comandos cuyo `destino` no es suyo) |
-| `crm.eventos` | todos los servicios | solo el orquestador |
-| `crm.dlt` | cualquiera | monitoreo / orquestador |
+| orquestador | `feature/orquestacion-tanda-b` | Lee `crm.eventos` y `crm.dlt`; por cada evento ordena el paso siguiente en `crm.comandos` (outbox, con `destino`). Los comandos que reenvían datos guardan su payload en el outbox **solo mientras están pendientes**. Los de un mismo lead salen en orden (`outbox.orden`, migración 0006). Se quita `ORQUESTADOR_PUBLICA_RESUMEN`. |
+| leads | `feat/tres-topicos-crm` | Publica `PreformularioCompletado`; atiende `ActualizarCalificacion` y `GuardarResumen`; DLT tras 3 intentos. Ya no publica `resumen-solicitado` ni escucha otros servicios. |
+| calificacion | `feat/tres-topicos-crm` | Atiende `CalificarLead`; publica `LeadCalificado` con sobre y con el `correlationId` del comando; DLT copiando el mensaje como texto. |
+| ia-resumen | `feat/tres-topicos-crm` | Atiende `GenerarResumen`; publica `ResumenGenerado`; DLT tras 3 intentos. |
+| clientes | `feat/tres-topicos-crm` | Atiende `RegistrarCalificacion`; sus eventos salen por `crm.eventos`; su DLT pasa a `crm.dlt`. |
 
-Equivalencias y detalle por servicio: docs/02 §7 y docs/05. Puntos de clientes: deja de escuchar `lead-calificado` y recibe el comando `RegistrarCalificacion`; publica `ClienteActualizado` y `ClienteAnonimizado` en `crm.eventos`; su DLT pasa a `crm.dlt`. Cuidado conocido: el `JsonSerializer` de Spring Kafka escribe `LocalDateTime` como arreglo salvo que el campo lleve `@JsonFormat(shape = STRING)`.
+**Flujo resultante** (ningún servicio escucha a otro):
 
-Después de B: flujo de multas (`ConsultarMultas` hacia el scraper `InfraccionScrapper`, nombre del servicio `multas`, responde por Kafka; vehiculos necesita `patente`; el scraper usa solo pnpm).
+```
+leads ──PreformularioCompletado──► crm.eventos ──► orquestador ──CalificarLead──► crm.comandos ──► calificacion
+calificacion ──LeadCalificado──► crm.eventos ──► orquestador ──► RegistrarCalificacion (clientes)
+                                                              ├─► ActualizarCalificacion (leads)
+                                                              └─► GenerarResumen (ia-resumen)
+ia-resumen ──ResumenGenerado──► crm.eventos ──► orquestador ──GuardarResumen──► leads
+```
+
+**Pase a Aiven (hacerlo con el flujo quieto, de una vez):** el plan free permite 5 tópicos y los 5 viejos ocupan el cupo.
+
+1. Esperar a que no haya flujos en curso (`GET /api/orquestador/flujos?estado=...`) o aceptar reprocesarlos con el reintento manual.
+2. Borrar los 5 tópicos viejos en Aiven (`preformulario-completado`, `lead-calificado`, `resumen-solicitado`, `resumen-generado`, `preformulario-completado-dlt`; y `lead-calificado.clientes.DLT` si existe).
+3. Mergear las 5 ramas y desplegar. El orquestador crea `crm.comandos`, `crm.eventos` y `crm.dlt` al arrancar (si el usuario de Aiven no puede crear tópicos, crearlos a mano). Los nombres van en `KAFKA_TOPICO_*`.
+
+**Pendientes de la tanda B:**
+
+- Prueba de punta a punta con los cinco servicios reales y ia-resumen con su clave del LLM.
+- Los payloads de `GuardarResumen` incluyen el texto del resumen (puede nombrar al cliente): está en el outbox solo hasta publicarse; si se quisiera evitar, guardar solo el `leadId` y pedir el resumen a leads.
+- Después de B: flujo de multas (`ConsultarMultas` hacia el scraper `InfraccionScrapper`, nombre del servicio `multas`, responde por Kafka; vehiculos necesita `patente`; el scraper usa solo pnpm).
 
 ## 5. Otros pendientes (fuera de A y B)
 

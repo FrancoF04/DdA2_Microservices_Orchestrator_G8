@@ -5,7 +5,7 @@ ia-resumen) y una tarea de fondo reintenta la conexión cada
 `kafka_reintento_conexion_segundos`.
 
 El consumer se suscribe a los tópicos que tengan un manejador registrado en
-`MANEJADORES`. En la fase 0 no hay ninguno; los agrega la fase 1b (seguimiento de flujos).
+`MANEJADORES` (hoy `crm.eventos` y `crm.dlt`; ver docs/08-contrato-tres-topicos.md).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.admin import AIOKafkaAdminClient, NewTopic
 
 from app.config import Settings
-from app.kafka.config import TOPICOS_PROPIOS, argumentos_seguridad
+from app.kafka.config import argumentos_seguridad, topicos_propios
 from app.kafka.eventos import armar_sobre
 
 logger = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ class ClienteKafka:
             existentes = set(await admin.list_topics())
             nuevos = [
                 NewTopic(name=t, num_partitions=3, replication_factor=1)
-                for t in TOPICOS_PROPIOS
+                for t in topicos_propios(self.settings)
                 if t not in existentes
             ]
             if nuevos:
@@ -182,9 +182,10 @@ class ClienteKafka:
         event_type: str,
         payload: dict[str, Any],
         correlation_id: Optional[str] = None,
+        destino: Optional[str] = None,
     ) -> dict[str, Any]:
         if self.producer is None:
             raise RuntimeError(f"Kafka no disponible (estado {self.estado}).")
-        sobre = armar_sobre(event_type, payload, correlation_id)
+        sobre = armar_sobre(event_type, payload, correlation_id, destino=destino)
         await self.producer.send_and_wait(topico, key=clave.encode("utf-8"), value=sobre)
         return sobre

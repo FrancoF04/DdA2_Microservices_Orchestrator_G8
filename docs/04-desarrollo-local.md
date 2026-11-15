@@ -68,9 +68,9 @@ AUTH_URL=http://127.0.0.1:8086
 JWT_SECRET=local-jwt-secret-solo-desarrollo-0123456789abcdef
 CLAVES_SERVICIO=leads=clave-gateway-leads-local-0000000000001,calificacion=clave-gateway-calificacion-local-00000001,ia-resumen=clave-gateway-ia-resumen-local-0000000001
 # Para trabajar sin login (solo desarrollo): AUTH_HABILITADA=false
-# Tanda A: true = el orquestador publica resumen-solicitado (y leads con LEADS_PUBLICA_RESUMEN=false).
-# Por defecto false: leads sigue publicándolo y el orquestador solo observa.
-ORQUESTADOR_PUBLICA_RESUMEN=false
+# Los tres tópicos del ecosistema (docs/08-contrato-tres-topicos.md): son los valores por defecto, no hace falta
+# definirlos. Los crea el orquestador al arrancar (en el Kafka local no hay límite de tópicos).
+# KAFKA_TOPICO_COMANDOS=crm.comandos  KAFKA_TOPICO_EVENTOS=crm.eventos  KAFKA_TOPICO_DLT=crm.dlt
 ```
 
 ```bash
@@ -95,8 +95,7 @@ CLIENTES_CLAVE_LEADS=solo-local-clave-de-servicio-leads-0001
 ORQUESTADOR_CLAVE_SERVICIO=clave-gateway-leads-local-0000000000001
 KAFKA_ENABLED=true
 KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
-# true (por defecto): leads publica resumen-solicitado. false: lo publica el orquestador.
-LEADS_PUBLICA_RESUMEN=true
+# Tópicos por defecto: crm.comandos, crm.eventos y crm.dlt (KAFKA_TOPICO_COMANDOS / _EVENTOS / _DLT).
 ```
 
 ```bash
@@ -205,7 +204,7 @@ El comando del README de clientes (`-pl clientes-service -am spring-boot:run`) *
 
 Flyway crea las tablas en el schema `clientes`. Swagger en <http://localhost:8082/swagger-ui.html> y salud en `/actuator/health`.
 
-Crea sus propios tópicos (`cliente-actualizado`, `cliente-anonimizado` y la DLT `lead-calificado.clientes.DLT`) y **no crea `lead-calificado`**, que es de calificacion (con el orquestador levantado, que lo escucha, se crea solo).
+Declara los tres tópicos del ecosistema (`crm.comandos`, `crm.eventos` y `crm.dlt`) y los crea si no existen. Escucha `crm.comandos` y atiende el comando `RegistrarCalificacion` (con `destino: clientes`); sus eventos `ClienteActualizado` y `ClienteAnonimizado` salen por `crm.eventos`.
 
 Al arrancar lee `lead-calificado` desde el principio. Los mensajes viejos que tengas en el volumen de Kafka pueden terminar en la DLT con un WARN: es normal. Si usás calificacion **sin** el fix de `fecha` (rama `fix/fecha-lead-calificado-iso`, PR pendiente), sus mensajes reales **también van a la DLT** y el historial de clientes queda vacío (ver [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md)).
 
@@ -259,7 +258,7 @@ La cola (`/cola`) pide login: usar `admin@example.com` / `admin-local-123` (el a
    ```
 
    Usar un `vehiculoId` existente (ej. el Corolla del seed).
-2. Mirar en kafka-ui (<http://localhost:8090>) los mensajes de `preformulario-completado`, `lead-calificado`, `resumen-solicitado` y `resumen-generado`.
+2. Mirar en kafka-ui (<http://localhost:8090>) los mensajes de `crm.eventos` (`PreformularioCompletado`, `LeadCalificado`, `ResumenGenerado`) y de `crm.comandos` (`CalificarLead`, `RegistrarCalificacion`, `ActualizarCalificacion`, `GenerarResumen`, `GuardarResumen`, cada uno con su `destino`). Contrato: [08-contrato-tres-topicos.md](08-contrato-tres-topicos.md).
 3. Ver las llamadas que pasaron por el orquestador:
 
    ```bash
@@ -284,20 +283,22 @@ La cola (`/cola`) pide login: usar `admin@example.com` / `admin-local-123` (el a
 | Llega `resumen-generado` (aunque sea tarde) | `COMPLETADO`: el flujo sale de `EXPIRADO` | leads guarda el resumen |
 | `POST /api/calificaciones/{leadId}/correcciones` | Paso `CORRECCION_CALIFICACION` `OK`, sin cambiar el estado | Historial con una entrada `MANUAL` más |
 
-Para ver el cierre sin Ollama, publicar a mano un `resumen-generado` con sobre y `payload: {leadId, resumen}` (clave del mensaje = `leadId`), con el mismo `kafka-console-producer` de la sección siguiente.
+Para ver el cierre sin Ollama, publicar a mano un evento `ResumenGenerado` en `crm.eventos`, con sobre y `payload: {leadId, resumen}` (clave del mensaje = `leadId`), con el mismo `kafka-console-producer` de la sección siguiente.
 
 Al arrancar contra un Kafka recién creado, el orquestador loguea errores `Topic ... not found in cluster metadata` y `GroupCoordinatorNotAvailableError`: es ruido del arranque y se recupera solo.
 
 ### Simular un servicio que no está levantado
 
-Para probar un tramo sin tener todos los servicios, se puede publicar a mano el evento que publicaría el servicio faltante. Por ejemplo, el `lead-calificado` de calificacion (que se publica **sin sobre**, JSON plano):
+Para probar un tramo sin tener todos los servicios, se puede publicar a mano el evento que publicaría el servicio faltante. Por ejemplo, el `LeadCalificado` de calificacion (siempre con sobre, en `crm.eventos`):
 
 ```bash
-echo '<leadId>|{"leadId":"<leadId>","clienteId":"<clienteId>","puntos":55,"nivel":"POTABLE","origen":"AUTOMATICA","motivos":[]}' \
+echo '<leadId>|{"eventId":"<uuid>","eventType":"LeadCalificado","version":1,"occurredAt":"2026-11-15T12:00:00Z","timestamp":"2026-11-15T12:00:00Z","correlationId":"<uuid>","payload":{"leadId":"<leadId>","clienteId":"<clienteId>","puntos":55,"nivel":"POTABLE","origen":"AUTOMATICA","fecha":"2026-11-15T12:00:00","motivos":[]}}' \
   | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
-      --bootstrap-server localhost:9092 --topic lead-calificado \
+      --bootstrap-server localhost:9092 --topic crm.eventos \
       --property parse.key=true --property "key.separator=|"
 ```
+
+El orquestador ordena entonces `RegistrarCalificacion`, `ActualizarCalificacion` y `GenerarResumen` en `crm.comandos`.
 
 En Git Bash anteponer `MSYS_NO_PATHCONV=1` a los comandos `docker compose exec`, porque si no Git Bash reescribe las rutas `/opt/...`.
 

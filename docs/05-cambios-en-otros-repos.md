@@ -49,12 +49,22 @@ Sobre común (el que ya usan leads e ia-resumen, más `version` y `destino`):
 - En Aiven se aplica en un cambio **coordinado**: los 5 tópicos viejos y los 3 nuevos no pueden convivir.
 - El orquestador publica los nombres de los tópicos y los `eventType` como contrato antes de que cada repo empiece su PR.
 
-**Estado:** pendiente. Es la fase de orquestación completa, después de la 1b.
+**Estado: implementado en la tanda B (2026-11-15), una rama `feat/tres-topicos-crm` en leads, ia-resumen, calificacion y clientes, y `feature/orquestacion-tanda-b` en el orquestador.** Corte duro, sin modo dual. El contrato exacto de cada mensaje (comandos, eventos, payloads) está en [08-contrato-tres-topicos.md](08-contrato-tres-topicos.md). Lo que cambió en cada repo:
+
+| Repo | Escucha (`crm.comandos`, solo su `destino`) | Publica (`crm.eventos`) | Falla (`crm.dlt`) |
+|---|---|---|---|
+| leads | `ActualizarCalificacion`, `GuardarResumen` | `PreformularioCompletado` | tras 3 intentos |
+| calificacion | `CalificarLead` | `LeadCalificado` (ahora con sobre) | tras 3 intentos |
+| ia-resumen | `GenerarResumen` | `ResumenGenerado` | tras 3 intentos |
+| clientes | `RegistrarCalificacion` | `ClienteActualizado`, `ClienteAnonimizado` | tras 5 intentos con espera exponencial |
+
+El pase a Aiven (los 5 tópicos viejos y los 3 nuevos no pueden convivir) está en [07-plan-orquestacion.md §4](07-plan-orquestacion.md).
 
 ## Hechos
 
 | Fecha | Repos | Cambio |
 |---|---|---|
+| 2026-11-15 | LeadsMicroservice, IAllmFormulario, CalificacionMicroservice, ClientMicroservice (ramas `feat/tres-topicos-crm`, sin PR todavía) | Pasan a los tres tópicos `crm.comandos` / `crm.eventos` / `crm.dlt`: escuchan solo comandos con su `destino`, publican sus hechos con sobre común y mandan a la DLT lo que agota reintentos. Se quitan `LEADS_PUBLICA_RESUMEN` y los tópicos viejos. Variables `KAFKA_TOPICO_COMANDOS`, `KAFKA_TOPICO_EVENTOS`, `KAFKA_TOPICO_DLT`. |
 | 2026-11-15 | LeadsMicroservice (rama `feat/resumen-lo-publica-el-orquestador`, sin PR todavía) | `LEADS_PUBLICA_RESUMEN` (por defecto `true`, igual que hoy): con `false` leads ya no publica `resumen-solicitado` porque lo hace el orquestador. Además `GET /health` (`UP`, o 503 `DOWN` si la base no responde). |
 | 2026-11-15 | MonitorMicroservice (rama `feat/objetivos-orquestador-auth-ia`, sin PR todavía) | Suma como objetivos al orquestador (`/health`), ia-resumen (`/openapi.json`) y auth (`/health`). Variables `ORQUESTADOR_SERVICE_URL`, `IA_RESUMEN_SERVICE_URL`, `AUTH_SERVICE_URL`. |
 | 2026-11-14 | CalificacionMicroservice (#6), VehiculosMicroservice (#19), MonitorMicroservice | Maven Wrapper con Maven 3.9.16: ya no hace falta instalar Maven para correrlos. |

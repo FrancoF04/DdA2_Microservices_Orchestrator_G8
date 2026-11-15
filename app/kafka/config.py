@@ -11,11 +11,9 @@ from typing import Any
 
 from app.config import Settings
 
-# Tópicos que el orquestador crea si no existen (Aiven no los autocrea).
-# Vacío a propósito: el plan free de Aiven permite solo 5 tópicos y ya están
-# todos en uso. Cuando se pase al esquema de 3 tópicos (crm.comandos,
-# crm.eventos, crm.dlt), van acá. Ver docs/05-cambios-en-otros-repos.md.
-TOPICOS_PROPIOS: list[str] = []
+def topicos_propios(settings: Settings) -> list[str]:
+    """Los tres tópicos del ecosistema, que el orquestador crea si no existen (Aiven no los autocrea)."""
+    return [settings.kafka_topico_comandos, settings.kafka_topico_eventos, settings.kafka_topico_dlt]
 
 
 def argumentos_seguridad(settings: Settings) -> dict[str, Any]:
