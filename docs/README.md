@@ -7,5 +7,6 @@
 | [03-despliegue-render.md](03-despliegue-render.md) | Despliegue en Render, CORS y qué variable cambia en cada repo para que su tráfico pase por el orquestador. |
 | [04-desarrollo-local.md](04-desarrollo-local.md) | Levantar todo el ecosistema en local: infraestructura en Docker y cada servicio nativo, con el `.env` de cada repo. |
 | [05-cambios-en-otros-repos.md](05-cambios-en-otros-repos.md) | Cambios pendientes en cada repo (Kafka de 3 tópicos, `/health`, headers, etc.), con su prioridad. |
+| [06-autenticacion.md](06-autenticacion.md) | Login de los operadores (JWT validado en el orquestador), rutas públicas y protegidas, credenciales de servicio, identidad hacia los servicios, configuración y límites conocidos. |
 
 Relevamiento hecho el 2026-11-14 sobre la rama local de cada repo (sin `git fetch`). Si los repos avanzan, hay que revalidar.
