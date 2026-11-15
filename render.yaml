@@ -1,73 +1,71 @@
-# Blueprint de Render para el orquestador (API Gateway).
-# Las variables con `sync: false` se completan a mano en el dashboard de Render
-# (son secretos o dependen de las URLs de cada servicio). Ver docs/03-despliegue-render.md.
+# Blueprint de Render de TODO el ecosistema CRM (grupo 8), para desplegar desde cero.
+# Paso a paso en docs/09-despliegue-desde-cero.md.
+#
+# - Cada servicio se construye desde su propio repo (`repo` + `branch`).
+# - Las URLs públicas se fijan acá: Render da https://<name>.onrender.com si el nombre está libre. Si al crear
+#   alguno le agrega un sufijo, hay que corregir su URL en las variables que la usan (ver docs/09 §5).
+# - Las variables con `sync: false` son secretos o datos de los proveedores (Aiven, Supabase, Ollama): Render las
+#   pide UNA sola vez, al crear el Blueprint. Sus valores los arma `scripts/preparar_despliegue.py` en
+#   despliegue.local/variables-por-servicio.md (fuera de git).
+# - Plan free: 512 MB por servicio, sin red privada entrante (se llaman por URL pública) y 750 horas por mes para
+#   todo el workspace. Un servicio se duerme a los 15 min sin tráfico HTTP entrante (Kafka no lo despierta).
+
 services:
+  # ---------------------------------------------------------------- orquestador (API Gateway)
   - type: web
-    name: orquestador
+    name: dda2-g8-orquestador
     runtime: docker
     plan: free
+    repo: https://github.com/FrancoF04/DdA2_Microservices_Orchestrator_G8
+    branch: dev
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     envVars:
-      # --- app ---
       - key: FORWARDED_ALLOW_IPS
         value: "*"            # el proxy de Render no tiene IP fija
       - key: LOG_LEVEL
         value: INFO
       - key: CORS_ALLOWED_ORIGINS
-        sync: false           # URL del front en Render (y localhost:5173 si se quiere probar local)
-
-      # --- servicios destino (URL pública de cada uno en Render, sin /recurso) ---
+        value: https://dda2-g8-front.onrender.com,http://localhost:5173
       - key: LEADS_URL
-        sync: false
+        value: https://dda2-g8-leads.onrender.com
       - key: CLIENTES_URL
-        sync: false
+        value: https://dda2-g8-clientes.onrender.com
       - key: VEHICULOS_URL
-        value: https://vehiculosmicroservice.onrender.com
+        value: https://dda2-g8-vehiculos.onrender.com
       - key: CALIFICACION_URL
-        sync: false
+        value: https://dda2-g8-calificacion.onrender.com
       - key: MONITOR_URL
-        sync: false
+        value: https://dda2-g8-monitor.onrender.com
       - key: IA_RESUMEN_URL
-        sync: false
+        value: https://dda2-g8-ia-resumen.onrender.com
       - key: AUTH_URL
-        sync: false
+        value: https://dda2-g8-auth.onrender.com
       - key: MULTAS_URL
-        sync: false
-      # Un servicio dormido en el plan free tarda hasta ~1 min en despertar.
+        value: https://dda2-g8-multas.onrender.com
       - key: PROXY_TIMEOUT_SEGUNDOS
-        value: "60"
-
-      # --- autenticación (docs/06-autenticacion.md) ---
-      # Sin JWT_SECRET el orquestador no arranca (a propósito: no puede quedar abierto).
+        value: "60"           # un servicio dormido tarda hasta ~1 min en despertar
       - key: JWT_SECRET
-        sync: false           # el mismo que JWT_SECRET de AuthMicroservice
+        sync: false           # el mismo que el de dda2-g8-auth
       - key: CLAVES_SERVICIO
-        sync: false           # leads=<clave>,calificacion=<clave>,ia-resumen=<clave> (32+ caracteres c/u)
-
-      # --- tópicos (docs/08-contrato-tres-topicos.md): los mismos nombres en todos los servicios ---
+        sync: false           # leads=...,calificacion=...,ia-resumen=...
       - key: KAFKA_TOPICO_COMANDOS
         value: crm.comandos
       - key: KAFKA_TOPICO_EVENTOS
         value: crm.eventos
       - key: KAFKA_TOPICO_DLT
         value: crm.dlt
-
-      # --- flujo de multas (docs/08 §7): el barrido queda apagado hasta que vehiculos tenga `patente` ---
       - key: VEHICULOS_API_KEY
-        sync: false           # X-Api-Key de escritura de vehiculos, para entregarle el resultado de las multas
+        sync: false           # la misma que VEHICULOS_CLAVE_ESCRITURA de dda2-g8-vehiculos
+      # Se prenden después del primer despliegue, con todo arriba (docs/09 §7).
       - key: MULTAS_BARRIDO_HABILITADO
         value: "false"
       - key: MULTAS_AL_ALTA
         value: "false"
-
-      # --- base de datos (Supabase, session pooler 5432) ---
       - key: DATABASE_URL
         sync: false
       - key: DB_SCHEMA
         value: orquestador
-
-      # --- kafka (Aiven) ---
       - key: KAFKA_ENABLED
         value: "true"
       - key: KAFKA_BOOTSTRAP_SERVERS
@@ -75,10 +73,334 @@ services:
       - key: KAFKA_SECURITY_PROTOCOL
         value: SASL_SSL
       - key: KAFKA_SASL_MECHANISM
-        sync: false           # PLAIN o SCRAM-SHA-256: a confirmar con quien administra Aiven
+        sync: false
       - key: KAFKA_SASL_USERNAME
         sync: false
       - key: KAFKA_SASL_PASSWORD
         sync: false
       - key: KAFKA_SSL_CAFILE
         value: ca.pem
+
+  # ---------------------------------------------------------------- auth
+  - type: web
+    name: dda2-g8-auth
+    runtime: docker
+    plan: free
+    repo: https://github.com/IvanLSanchez/AuthMicroservice
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8000"         # el Dockerfile escucha en 8000
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_SCHEMA
+        value: crm_auth       # `auth` ya existe en Supabase (es el de su propio servicio de autenticación)
+      - key: JWT_SECRET
+        sync: false           # el mismo que el del orquestador
+      - key: FRONTEND_LIST
+        value: https://dda2-g8-front.onrender.com
+      - key: SEED_ADMIN_EMAIL
+        sync: false
+      - key: SEED_ADMIN_PASSWORD
+        sync: false
+
+  # ---------------------------------------------------------------- leads
+  - type: web
+    name: dda2-g8-leads
+    runtime: docker
+    plan: free
+    repo: https://github.com/naimgaunaa/LeadsMicroservice
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8000"         # el Dockerfile escucha en 8000
+      - key: DATABASE_URL
+        sync: false
+      - key: FRONTEND_LIST
+        value: https://dda2-g8-front.onrender.com
+      - key: CLIENTES_URL
+        value: https://dda2-g8-orquestador.onrender.com/api
+      - key: CLIENTES_CLAVE_LEADS
+        sync: false           # la misma que en dda2-g8-clientes
+      - key: ORQUESTADOR_CLAVE_SERVICIO
+        sync: false           # la de leads en CLAVES_SERVICIO del orquestador
+      - key: KAFKA_ENABLED
+        value: "true"
+      - key: KAFKA_BOOTSTRAP_SERVERS
+        sync: false
+      - key: KAFKA_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - key: KAFKA_SASL_MECHANISM
+        sync: false
+      - key: KAFKA_SASL_USERNAME
+        sync: false
+      - key: KAFKA_SASL_PASSWORD
+        sync: false
+      - key: KAFKA_SSL_CAFILE
+        value: ca.pem
+      - key: KAFKA_TOPICO_COMANDOS
+        value: crm.comandos
+      - key: KAFKA_TOPICO_EVENTOS
+        value: crm.eventos
+      - key: KAFKA_TOPICO_DLT
+        value: crm.dlt
+
+  # ---------------------------------------------------------------- calificacion
+  - type: web
+    name: dda2-g8-calificacion
+    runtime: docker
+    plan: free
+    repo: https://github.com/naimgaunaa/CalificacionMicroservice
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: PORT
+        value: "8084"         # server.port fijo en application.yml
+      - key: JAVA_TOOL_OPTIONS
+        value: -XX:MaxRAMPercentage=70 -XX:+UseSerialGC   # 512 MB del plan free
+      - key: SPRING_DATASOURCE_URL
+        sync: false
+      - key: SPRING_DATASOURCE_USERNAME
+        sync: false
+      - key: SPRING_DATASOURCE_PASSWORD
+        sync: false
+      - key: CLIENTES_SERVICE_URL
+        value: https://dda2-g8-orquestador.onrender.com/api
+      - key: VEHICULOS_SERVICE_URL
+        value: https://dda2-g8-orquestador.onrender.com/api
+      - key: CLIENTES_CLAVE_CALIFICACION
+        sync: false           # la misma que en dda2-g8-clientes
+      - key: ORQUESTADOR_CLAVE_SERVICIO
+        sync: false           # la de calificacion en CLAVES_SERVICIO del orquestador
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://dda2-g8-front.onrender.com
+      - key: SPRING_KAFKA_BOOTSTRAP_SERVERS
+        sync: false
+      - key: SPRING_KAFKA_PROPERTIES_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - key: SPRING_KAFKA_PROPERTIES_SASL_MECHANISM
+        sync: false
+      - key: SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG
+        sync: false
+      - key: KAFKA_TOPICO_COMANDOS
+        value: crm.comandos
+      - key: KAFKA_TOPICO_EVENTOS
+        value: crm.eventos
+      - key: KAFKA_TOPICO_DLT
+        value: crm.dlt
+
+  # ---------------------------------------------------------------- clientes
+  - type: web
+    name: dda2-g8-clientes
+    runtime: docker
+    plan: free
+    repo: https://github.com/Juahn1/ClientMicroservice
+    branch: main
+    dockerContext: .
+    dockerfilePath: ./clientes-service/Dockerfile
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: PORT
+        value: "8082"
+      - key: JAVA_TOOL_OPTIONS
+        value: -XX:MaxRAMPercentage=70 -XX:+UseSerialGC
+      - key: SPRING_PROFILES_ACTIVE
+        value: docker         # el perfil que lee CLIENTES_DB_* y KAFKA_BOOTSTRAP_SERVERS
+      - key: CLIENTES_DB_URL
+        sync: false
+      - key: CLIENTES_DB_USUARIO
+        sync: false
+      - key: CLIENTES_DB_CLAVE
+        sync: false
+      - key: CLIENTES_CUIL_CLAVE
+        sync: false           # no se puede cambiar una vez que hay datos
+      - key: CLIENTES_CUIL_HMAC
+        sync: false           # ídem
+      - key: CLIENTES_CLAVE_LEADS
+        sync: false
+      - key: CLIENTES_CLAVE_CALIFICACION
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://dda2-g8-front.onrender.com
+      - key: KAFKA_BOOTSTRAP_SERVERS
+        sync: false
+      - key: SPRING_KAFKA_PROPERTIES_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - key: SPRING_KAFKA_PROPERTIES_SASL_MECHANISM
+        sync: false
+      - key: SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG
+        sync: false
+      - key: KAFKA_TOPICO_COMANDOS
+        value: crm.comandos
+      - key: KAFKA_TOPICO_EVENTOS
+        value: crm.eventos
+      - key: KAFKA_TOPICO_DLT
+        value: crm.dlt
+
+  # ---------------------------------------------------------------- vehiculos
+  - type: web
+    name: dda2-g8-vehiculos
+    runtime: docker
+    plan: free
+    repo: https://github.com/naimgaunaa/VehiculosMicroservice
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: PORT
+        value: "8083"         # server.port fijo en application.yml
+      - key: JAVA_TOOL_OPTIONS
+        value: -XX:MaxRAMPercentage=70 -XX:+UseSerialGC
+      # `seed` carga las 10 unidades de prueba con patente. Es idempotente: se puede dejar puesto.
+      - key: SPRING_PROFILES_ACTIVE
+        value: docker,seed
+      - key: VEHICULOS_DB_URL
+        sync: false
+      - key: VEHICULOS_DB_USUARIO
+        sync: false
+      - key: VEHICULOS_DB_CLAVE
+        sync: false
+      - key: VEHICULOS_CLAVE_ESCRITURA
+        sync: false           # la misma que VEHICULOS_API_KEY del orquestador
+      # Fotos apagadas: el seed no tiene fotos. Para prenderlas: modo supabase + URL y clave de Storage (docs/09 §8).
+      - key: VEHICULOS_FOTOS_MODO
+        value: deshabilitado
+      - key: VEHICULOS_FOTOS_BUCKET
+        value: fotos-vehiculos
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://dda2-g8-front.onrender.com
+
+  # ---------------------------------------------------------------- ia-resumen
+  - type: web
+    name: dda2-g8-ia-resumen
+    runtime: python
+    plan: free
+    repo: https://github.com/JoaquinUade/IAllmFormulario
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: OLLAMA_API_KEY
+        sync: false
+      - key: CLIENTES_URL
+        value: https://dda2-g8-orquestador.onrender.com/api
+      - key: VEHICULOS_URL
+        value: https://dda2-g8-orquestador.onrender.com/api
+      - key: ORQUESTADOR_CLAVE_SERVICIO
+        sync: false           # la de ia-resumen en CLAVES_SERVICIO del orquestador
+      - key: KAFKA_ENABLED
+        value: "true"
+      - key: KAFKA_BOOTSTRAP_SERVERS
+        sync: false
+      - key: KAFKA_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - key: KAFKA_SASL_MECHANISM
+        sync: false
+      - key: KAFKA_SASL_USERNAME
+        sync: false
+      - key: KAFKA_SASL_PASSWORD
+        sync: false
+      - key: KAFKA_SSL_CAFILE
+        value: ca.pem
+      - key: KAFKA_TOPICO_COMANDOS
+        value: crm.comandos
+      - key: KAFKA_TOPICO_EVENTOS
+        value: crm.eventos
+      - key: KAFKA_TOPICO_DLT
+        value: crm.dlt
+
+  # ---------------------------------------------------------------- multas (scraper de la ANSV)
+  # Medido con 512 MB de límite: una consulta real usa ~290 MiB de pico. La imagen pesa ~3,7 GB (build lento).
+  - type: web
+    name: dda2-g8-multas
+    runtime: docker
+    plan: free
+    repo: https://github.com/Juahn1/InfraccionScrapper
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8087"
+      - key: KAFKA_BOOTSTRAP_SERVERS
+        sync: false
+      - key: KAFKA_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - key: KAFKA_SASL_MECHANISM
+        sync: false
+      - key: KAFKA_SASL_USERNAME
+        sync: false
+      - key: KAFKA_SASL_PASSWORD
+        sync: false
+      - key: KAFKA_TOPICO_COMANDOS
+        value: crm.comandos
+      - key: KAFKA_TOPICO_EVENTOS
+        value: crm.eventos
+      - key: KAFKA_TOPICO_DLT
+        value: crm.dlt
+
+  # ---------------------------------------------------------------- monitor
+  # Sondea a cada servicio directo (no por el gateway). Mientras está despierto, mantiene despiertos a los demás.
+  - type: web
+    name: dda2-g8-monitor
+    runtime: docker
+    plan: free
+    repo: https://github.com/manuherrera09/MonitorMicroservice
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: PORT
+        value: "8085"
+      - key: JAVA_TOOL_OPTIONS
+        value: -XX:MaxRAMPercentage=70 -XX:+UseSerialGC
+      - key: VEHICULOS_SERVICE_URL
+        value: https://dda2-g8-vehiculos.onrender.com
+      - key: CLIENTES_SERVICE_URL
+        value: https://dda2-g8-clientes.onrender.com
+      - key: LEADS_SERVICE_URL
+        value: https://dda2-g8-leads.onrender.com
+      - key: CALIFICACION_SERVICE_URL
+        value: https://dda2-g8-calificacion.onrender.com
+      - key: ORQUESTADOR_SERVICE_URL
+        value: https://dda2-g8-orquestador.onrender.com
+      - key: IA_RESUMEN_SERVICE_URL
+        value: https://dda2-g8-ia-resumen.onrender.com
+      - key: AUTH_SERVICE_URL
+        value: https://dda2-g8-auth.onrender.com
+      - key: MULTAS_SERVICE_URL
+        value: https://dda2-g8-multas.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://dda2-g8-front.onrender.com
+
+  # ---------------------------------------------------------------- front (Vite, sitio estático)
+  - type: web
+    name: dda2-g8-front
+    runtime: static
+    repo: https://github.com/manuherrera09/DDA2
+    branch: main
+    buildCommand: corepack enable && corepack prepare pnpm@10.17.1 --activate && pnpm install --frozen-lockfile && pnpm build
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite         # SPA: todas las rutas las resuelve el router del front
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://dda2-g8-orquestador.onrender.com/api
+      # Solo para el Health Dashboard (/monitor) y su sondeo directo de respaldo.
+      - key: VITE_MONITOR_API_URL
+        value: https://dda2-g8-monitor.onrender.com
+      - key: VITE_VEHICULOS_API_URL
+        value: https://dda2-g8-vehiculos.onrender.com
+      - key: VITE_LEADS_API_URL
+        value: https://dda2-g8-leads.onrender.com
+      - key: VITE_CALIFICACION_API_URL
+        value: https://dda2-g8-calificacion.onrender.com
+      - key: VITE_CLIENTES_API_URL
+        value: https://dda2-g8-clientes.onrender.com

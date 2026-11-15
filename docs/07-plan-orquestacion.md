@@ -145,6 +145,8 @@ ia-resumen ──ResumenGenerado──► crm.eventos ──► orquestador ─�
 
 **De punta a punta con los tres servicios reales** (orquestador, scraper con la ANSV simulada y vehiculos real, sobre Kafka y un Postgres local descartable): el alta por el gateway abre sola la consulta; completa con multas y sin multas; el sitio caído se reintenta; el cambio de estructura queda FALLIDO sin reintentar; una unidad sin patente queda FALLIDA en el acto; vehiculos guarda el detalle y solo lo entrega con la clave.
 
+**Despliegue desde cero:** ver [09](09-despliegue-desde-cero.md) (Blueprint de los 10 servicios, secretos, SQL de Supabase, verificación). Ensayado completo en local.
+
 **Falta:**
 
 - Aplicar la `V2` de vehiculos a la base compartida (Naim) antes de desplegar; Naim decide además qué significa tener multas (marcar la unidad, afectar el precio...).

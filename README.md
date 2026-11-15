@@ -58,7 +58,7 @@ pytest
 
 Ejemplo: `GET /api/leads?estado=CALIFICADO` se reenvía a `{LEADS_URL}/leads?estado=CALIFICADO`.
 
-Para desplegar en Render y conectar los demás servicios, ver [docs/03-despliegue-render.md](docs/03-despliegue-render.md).
+Para desplegar todo el ecosistema desde cero (Aiven, Supabase y Render, con un Blueprint de los 10 servicios), ver [docs/09-despliegue-desde-cero.md](docs/09-despliegue-desde-cero.md). CORS y particularidades del plan free de Render: [docs/03-despliegue-render.md](docs/03-despliegue-render.md).
 
 ## Dependencias
 

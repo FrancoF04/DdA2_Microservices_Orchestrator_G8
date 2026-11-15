@@ -1,5 +1,7 @@
 # Despliegue en Render y conexión de los servicios
 
+> **Para desplegar desde cero, seguir [09-despliegue-desde-cero.md](09-despliegue-desde-cero.md)** (Blueprint de los 10 servicios, secretos y verificación). Este documento sigue valiendo para entender CORS, el plan free y por qué cada servicio apunta al gateway.
+
 Cómo se despliega el orquestador en Render (la plataforma que usa el resto del equipo) y qué cambia en cada repo para que su tráfico pase por él.
 
 ## 1. Crear el servicio en Render

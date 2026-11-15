@@ -224,3 +224,6 @@ __marimo__/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Secretos y variables del despliegue (scripts/preparar_despliegue.py): nunca subir
+despliegue.local/
