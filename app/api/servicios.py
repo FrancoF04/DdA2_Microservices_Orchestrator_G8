@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_, select
 
@@ -17,8 +17,11 @@ from app.db.models import LlamadaServicio
 from app.db.session import obtener_sessionmaker
 from app.errores import ErrorOrquestador
 from app.proxy.rutas import servicios_configurados
+from app.seguridad.dependencias import requiere_operador
 
-router = APIRouter(prefix="/api/orquestador", tags=["Orquestador"])
+router = APIRouter(
+    prefix="/api/orquestador", tags=["Orquestador"], dependencies=[Depends(requiere_operador)]
+)
 
 
 class EstadisticaServicio(BaseModel):

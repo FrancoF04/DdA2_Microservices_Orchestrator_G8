@@ -55,6 +55,7 @@ def problem_response(
     detalle: str,
     titulo: Optional[str] = None,
     extra: Optional[dict[str, Any]] = None,
+    headers: Optional[dict[str, str]] = None,
 ) -> JSONResponse:
     cuerpo: dict[str, Any] = {
         "type": "about:blank",
@@ -66,13 +67,15 @@ def problem_response(
     }
     if extra:
         cuerpo.update(extra)
-    return JSONResponse(status_code=status, content=cuerpo, media_type=PROBLEM_JSON)
+    return JSONResponse(status_code=status, content=cuerpo, media_type=PROBLEM_JSON, headers=headers)
 
 
 def registrar_manejadores(app: FastAPI) -> None:
     @app.exception_handler(ErrorOrquestador)
     async def _orquestador(_: Request, exc: ErrorOrquestador) -> JSONResponse:
-        return problem_response(exc.status, exc.codigo, exc.detalle, extra=exc.extra)
+        # RFC 9110: toda respuesta 401 indica con qué esquema autenticarse.
+        headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else None
+        return problem_response(exc.status, exc.codigo, exc.detalle, extra=exc.extra, headers=headers)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(_: Request, exc: StarletteHTTPException) -> JSONResponse:

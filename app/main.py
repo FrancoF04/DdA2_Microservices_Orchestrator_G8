@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -23,6 +24,10 @@ from app.logging_config import configurar_logging
 from app.middleware.correlation_id import HEADER as CORRELATION_HEADER
 from app.middleware.correlation_id import CorrelationIdMiddleware
 from app.proxy.clientes_http import ClientesHttp
+from app.seguridad.autenticador import Autenticador, validar_configuracion_auth
+from app.seguridad.revocaciones import Revocaciones
+
+logger = logging.getLogger(__name__)
 
 
 def crear_app(
@@ -35,7 +40,12 @@ def crear_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # Falla rápido: sin JWT_SECRET el gateway no puede validar tokens y no debe quedar abierto.
+        validar_configuracion_auth(settings)
         iniciar_db(settings)
+        cargados = await app.state.autenticador.revocaciones.cargar()
+        if cargados:
+            logger.info("Tokens revocados recuperados de la base: %s", cargados)
         # Un cliente HTTP por servicio destino (aislamiento y autoreparación).
         app.state.http = ClientesHttp(transporte_http)
         await app.state.auditoria.iniciar()
@@ -66,6 +76,7 @@ def crear_app(
     app.state.settings = settings
     app.state.kafka = ClienteKafka(settings)
     app.state.auditoria = RegistroAuditoria(settings)
+    app.state.autenticador = Autenticador(settings, Revocaciones())
 
     app.add_middleware(
         CORSMiddleware,

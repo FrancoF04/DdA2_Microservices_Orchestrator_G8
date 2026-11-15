@@ -64,6 +64,7 @@ def gateway(servicios: ServiciosFalsos, auditoria: AuditoriaFalsa) -> Iterator[T
         calificacion_url="http://calificacion.test",
         auth_url=None,
         proxy_reintentos_get=1,
+        auth_habilitada=False,  # la autenticación se prueba en test_auth_gateway.py
     )
     app = crear_app(settings, transporte_http=httpx.MockTransport(servicios))
     app.state.auditoria = auditoria

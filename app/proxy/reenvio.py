@@ -29,10 +29,13 @@ from app.middleware.correlation_id import HEADER as CORRELATION_HEADER
 from app.middleware.correlation_id import correlation_id_actual
 from app.proxy.clientes_http import ClientesHttp
 from app.proxy.rutas import Destino
+from app.seguridad.identidad import OPERADOR, SERVICIO, Identidad
 
 logger = logging.getLogger(__name__)
 
 HEADER_ORIGEN = "X-Origen-Servicio"
+HEADER_USUARIO = "X-Usuario"
+HEADER_USUARIO_ROL = "X-Usuario-Rol"
 
 # Headers que no se reenvían (RFC 9110 §7.6.1) más los que recalcula el proxy.
 _HOP_BY_HOP = {
@@ -46,14 +49,20 @@ _HOP_BY_HOP = {
     "transfer-encoding",
     "upgrade",
 }
-_NO_REENVIAR_REQUEST = _HOP_BY_HOP | {"host", CORRELATION_HEADER.lower()}
+# La credencial de servicio es un secreto entre el servicio y el orquestador: no sigue de largo.
+_NO_REENVIAR_REQUEST = _HOP_BY_HOP | {"host", CORRELATION_HEADER.lower(), "x-clave-servicio"}
 _NO_REENVIAR_RESPONSE = _HOP_BY_HOP | {CORRELATION_HEADER.lower()}
 
 _METODOS_SIN_BODY = {"GET", "HEAD", "OPTIONS"}
 
 
-def detectar_origen(request: Request) -> str:
-    """Quién llama. Fase 1: se infiere; fase 2: cada servicio manda X-Origen-Servicio."""
+def detectar_origen(request: Request, identidad: Optional[Identidad] = None) -> str:
+    """Quién llama. Si está autenticado es un dato verificado; si no, se infiere de los headers."""
+    if identidad is not None:
+        if identidad.tipo == SERVICIO and identidad.servicio:
+            return identidad.servicio
+        if identidad.tipo == OPERADOR:
+            return "front"
     declarado = request.headers.get(HEADER_ORIGEN)
     if declarado:
         return declarado.strip().lower()[:50]
@@ -62,10 +71,44 @@ def detectar_origen(request: Request) -> str:
     return "desconocido"
 
 
-def _headers_request(request: Request, cid: str) -> list[tuple[str, str]]:
-    headers = [
-        (k, v) for k, v in request.headers.items() if k.lower() not in _NO_REENVIAR_REQUEST
-    ]
+def _valor_header_seguro(valor: Optional[str]) -> Optional[str]:
+    """Solo ASCII imprimible y corto: un header no puede llevar saltos de línea ni caracteres raros."""
+    if valor and valor.isascii() and valor.isprintable() and len(valor) <= 254:
+        return valor
+    return None
+
+
+def _headers_identidad(identidad: Optional[Identidad]) -> list[tuple[str, str]]:
+    """`X-Usuario` / `X-Usuario-Rol` a partir del token validado (nunca de lo que mande el cliente)."""
+    if identidad is None or identidad.tipo != OPERADOR:
+        return []
+    usuario = _valor_header_seguro(identidad.email) or _valor_header_seguro(identidad.usuario_id)
+    headers = []
+    if usuario:
+        headers.append((HEADER_USUARIO, usuario))
+    rol = _valor_header_seguro(identidad.rol)
+    if rol:
+        headers.append((HEADER_USUARIO_ROL, rol))
+    return headers
+
+
+def _headers_request(
+    request: Request,
+    cid: str,
+    destino: Destino,
+    identidad: Optional[Identidad],
+    auth_habilitada: bool,
+) -> list[tuple[str, str]]:
+    no_reenviar = set(_NO_REENVIAR_REQUEST)
+    if auth_habilitada:
+        # La identidad la decide el orquestador: se descarta cualquier X-Usuario del cliente.
+        no_reenviar |= {HEADER_USUARIO.lower(), HEADER_USUARIO_ROL.lower()}
+        # Solo auth necesita el JWT; el resto de los servicios no lo valida ni tiene por qué verlo.
+        if destino.servicio != "auth":
+            no_reenviar.add("authorization")
+    headers = [(k, v) for k, v in request.headers.items() if k.lower() not in no_reenviar]
+    if auth_habilitada:
+        headers.extend(_headers_identidad(identidad))
     headers.append((CORRELATION_HEADER, cid))
     if "x-forwarded-for" not in request.headers and request.client:
         headers.append(("X-Forwarded-For", request.client.host))
@@ -99,9 +142,10 @@ async def reenviar(
     clientes: ClientesHttp,
     auditoria: RegistroAuditoria,
     settings: Settings,
+    identidad: Optional[Identidad] = None,
 ) -> Response:
     cid = correlation_id_actual() or ""
-    origen = detectar_origen(request)
+    origen = detectar_origen(request, identidad)
     metodo = request.method.upper()
 
     def auditar(codigo: Optional[int], latencia_ms: int, error: Optional[str]) -> None:
@@ -132,7 +176,7 @@ async def reenviar(
     if request.url.query:
         url += "?" + request.url.query  # tal cual, sin re-codificar
     con_body = metodo not in _METODOS_SIN_BODY and _tiene_body(request)
-    headers = _headers_request(request, cid)
+    headers = _headers_request(request, cid, destino, identidad, settings.auth_habilitada)
     timeout = httpx.Timeout(
         settings.proxy_timeout_segundos, connect=settings.proxy_timeout_conexion_segundos
     )

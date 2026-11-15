@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -14,8 +14,11 @@ from sqlalchemy.orm import selectinload
 from app.db.models import Flujo
 from app.db.session import obtener_sessionmaker
 from app.errores import ErrorOrquestador
+from app.seguridad.dependencias import requiere_operador
 
-router = APIRouter(prefix="/api/orquestador/flujos", tags=["Orquestador"])
+router = APIRouter(
+    prefix="/api/orquestador/flujos", tags=["Orquestador"], dependencies=[Depends(requiere_operador)]
+)
 
 
 class PasoResponse(BaseModel):

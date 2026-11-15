@@ -69,9 +69,23 @@ class Settings(BaseSettings):
     flujo_intervalo_vencimiento_segundos: float = 15.0
     auditoria_retencion_dias: int = 7
 
+    # --- autenticación (ver docs/06-autenticacion.md) ---
+    # Si está habilitada, las rutas protegidas exigen el JWT que emite el servicio auth
+    # (validado acá, localmente) o la credencial de un servicio. Con auth_habilitada=true el
+    # orquestador NO arranca sin JWT_SECRET. Solo se apaga (false) en desarrollo y en tests.
+    auth_habilitada: bool = True
+    # Mismo secreto que JWT_SECRET de AuthMicroservice (HS256). Mínimo 32 caracteres.
+    jwt_secret: Optional[str] = None
+    jwt_algorithm: str = "HS256"
+    # Credenciales de los servicios que llaman a otros a través del orquestador, como
+    # "leads=<clave>,calificacion=<clave>,ia-resumen=<clave>". Cada clave: 32+ caracteres y distinta.
+    claves_servicio: Optional[str] = None
+
     @field_validator(
         "auth_url",
         "multas_url",
+        "jwt_secret",
+        "claves_servicio",
         "database_url",
         "kafka_security_protocol",
         "kafka_sasl_mechanism",
@@ -90,6 +104,19 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
+    @property
+    def claves_servicio_por_nombre(self) -> dict[str, str]:
+        """`CLAVES_SERVICIO` ("leads=abc,calificacion=def") como {nombre: clave}."""
+        resultado: dict[str, str] = {}
+        for par in (self.claves_servicio or "").split(","):
+            if not par.strip():
+                continue
+            nombre, separador, clave = par.partition("=")
+            if not separador or not nombre.strip() or not clave.strip():
+                raise ValueError("CLAVES_SERVICIO tiene que ser 'servicio=clave,servicio=clave'.")
+            resultado[nombre.strip().lower()] = clave.strip()
+        return resultado
 
 
 @lru_cache
