@@ -26,14 +26,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Protocol
 
 import httpx
-from sqlalchemy import exists, select
+from sqlalchemy import delete, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from app.config import Settings
-from app.db.models import Flujo, Outbox
+from app.db.models import EventoProcesado, Flujo, Outbox
 from app.db.session import obtener_sessionmaker
 from app.flujos import comandos as cmd
+from app.flujos import multas
 from app.flujos import registro_lead as rl
 from app.flujos.comandos import ComandoSaliente
 from app.flujos.resumen import armar_payload_resumen
@@ -80,15 +81,19 @@ async def encolar(session: AsyncSession, flujo: Flujo, comando: ComandoSaliente)
         ).first()
         if pendiente is not None:
             return False
+    campo_clave = "vehiculoId" if flujo.tipo == multas.TIPO else "leadId"
     mensaje: dict[str, Any] = {
         "eventType": comando.event_type,
         "destino": comando.destino,
-        "leadId": flujo.clave_negocio,
+        campo_clave: flujo.clave_negocio,
         "correlationId": flujo.correlation_id,
     }
     if comando.payload is not None:
         mensaje["payload"] = comando.payload
-    session.add(Outbox(flujo_id=flujo.id, topic=comando.topic, clave=flujo.clave_negocio, mensaje=mensaje))
+    fila = Outbox(flujo_id=flujo.id, topic=comando.topic, clave=flujo.clave_negocio, mensaje=mensaje)
+    if comando.demora_segundos > 0:
+        fila.proximo_intento_en = datetime.now(timezone.utc) + timedelta(seconds=comando.demora_segundos)
+    session.add(fila)
     # Un flush por comando: el `orden` queda en el orden en que se anotaron.
     await session.flush()
     return True
@@ -109,6 +114,53 @@ async def _datos_del_lead(
     if respuesta.status_code != 200:
         raise RuntimeError(f"leads respondió {respuesta.status_code} al consultar el lead")
     return respuesta.json()
+
+
+class ComandoNoEnviable(Exception):
+    """El comando no se puede armar o entregar y reintentar no lo arregla (ej. una unidad sin patente)."""
+
+
+async def _patente_del_vehiculo(
+    settings: Settings, http: ClientesHttp, vehiculo_id: str, correlation_id: Optional[str]
+) -> str:
+    """`GET /vehiculos/{id}` directo a vehiculos: la patente no se guarda en el orquestador."""
+    headers = {"X-Origen-Servicio": ORIGEN}
+    if correlation_id:
+        headers[CORRELATION_HEADER] = correlation_id
+    respuesta = await http.para("vehiculos").get(
+        f"{settings.vehiculos_url.rstrip('/')}/vehiculos/{vehiculo_id}",
+        headers=headers,
+        timeout=httpx.Timeout(settings.proxy_timeout_segundos, connect=settings.proxy_timeout_conexion_segundos),
+    )
+    if respuesta.status_code == 404:
+        raise ComandoNoEnviable("la unidad ya no existe en vehiculos")
+    if respuesta.status_code != 200:
+        raise RuntimeError(f"vehiculos respondió {respuesta.status_code} al consultar la unidad")
+    patente = respuesta.json().get("patente")
+    if not patente:
+        raise ComandoNoEnviable("la unidad no tiene patente cargada en vehiculos")
+    return str(patente)
+
+
+async def _entregar_multas(settings: Settings, http: ClientesHttp, mensaje: dict[str, Any]) -> None:
+    """`PUT /vehiculos/{id}/multas` con el resultado del scraper. vehiculos decide qué hace con él."""
+    headers = {"X-Origen-Servicio": ORIGEN}
+    if mensaje.get("correlationId"):
+        headers[CORRELATION_HEADER] = mensaje["correlationId"]
+    if settings.vehiculos_api_key:
+        headers["X-Api-Key"] = settings.vehiculos_api_key
+    respuesta = await http.para("vehiculos").put(
+        f"{settings.vehiculos_url.rstrip('/')}/vehiculos/{mensaje['vehiculoId']}/multas",
+        json=mensaje["payload"],
+        headers=headers,
+        timeout=httpx.Timeout(settings.proxy_timeout_segundos, connect=settings.proxy_timeout_conexion_segundos),
+    )
+    if 200 <= respuesta.status_code < 300:
+        return
+    if respuesta.status_code in (400, 401, 403, 404, 409, 422):
+        # El pedido en sí está mal (o no hay permiso): repetirlo igual no ayuda.
+        raise ComandoNoEnviable(f"vehiculos rechazó el resultado con {respuesta.status_code}")
+    raise RuntimeError(f"vehiculos respondió {respuesta.status_code} al recibir las multas")
 
 
 def _descripcion(exc: Exception) -> str:
@@ -140,6 +192,9 @@ async def _payload(settings: Settings, http: ClientesHttp, mensaje: dict[str, An
     if mensaje["eventType"] == cmd.GENERAR_RESUMEN:
         lead = await _datos_del_lead(settings, http, mensaje["leadId"], mensaje.get("correlationId"))
         return armar_payload_resumen(lead)
+    if mensaje["eventType"] == cmd.CONSULTAR_MULTAS:
+        patente = await _patente_del_vehiculo(settings, http, mensaje["vehiculoId"], mensaje.get("correlationId"))
+        return {"vehiculoId": mensaje["vehiculoId"], "patente": patente}
     return mensaje["payload"]
 
 
@@ -148,6 +203,10 @@ def _al_abandonar(flujo: Flujo, tipo: str, ahora: datetime, referencia: str, det
         rl.al_resumen_no_publicado(flujo, detalle)
     elif tipo == cmd.CALIFICAR_LEAD:
         rl.al_calificar_no_publicado(flujo, ahora, referencia, detalle)
+    elif tipo == cmd.CONSULTAR_MULTAS:
+        multas.al_consulta_no_publicada(flujo, ahora, referencia, detalle)
+    elif tipo == cmd.GUARDAR_MULTAS:
+        multas.al_guardado_fallido(flujo, ahora, referencia, detalle)
     elif tipo in cmd.PASO_DEL_COMANDO:
         paso, servicio = cmd.PASO_DEL_COMANDO[tipo]
         rl.al_comando_con_error(flujo, paso, servicio, ahora, referencia, f"No se pudo publicar {tipo}: {detalle}")
@@ -160,11 +219,17 @@ async def _despachar_uno(
     mensaje = fila.mensaje
     tipo = mensaje["eventType"]
     try:
-        payload = await _payload(settings, http, mensaje)
-        sobre = await kafka.publicar(
-            fila.topic, fila.clave, tipo, payload, mensaje.get("correlationId"), destino=mensaje["destino"]
-        )
+        if tipo == cmd.GUARDAR_MULTAS:
+            await _entregar_multas(settings, http, mensaje)
+            sobre: dict[str, Any] = {}
+        else:
+            payload = await _payload(settings, http, mensaje)
+            sobre = await kafka.publicar(
+                fila.topic, fila.clave, tipo, payload, mensaje.get("correlationId"), destino=mensaje["destino"]
+            )
     except Exception as exc:  # noqa: BLE001 - cualquier falla es un intento fallido, no se pierde el comando
+        if isinstance(exc, ComandoNoEnviable):
+            fila.intentos = settings.outbox_max_intentos - 1  # reintentar no lo arregla: se abandona ya
         fila.intentos += 1
         fila.ultimo_error = _descripcion(exc)
         if fila.intentos >= settings.outbox_max_intentos:
@@ -193,7 +258,12 @@ async def _despachar_uno(
         flujo = await _flujo_bloqueado(session, fila.flujo_id)
         if flujo is not None:
             rl.al_resumen_solicitado(flujo, ahora, sobre["eventId"], settings)
-    logger.info("Publicado %s del lead %s en %s (destino %s).", tipo, fila.clave, fila.topic, mensaje["destino"])
+    elif tipo == cmd.GUARDAR_MULTAS:
+        # vehiculos ya recibió el resultado: termina la consulta de esa unidad.
+        flujo = await _flujo_bloqueado(session, fila.flujo_id)
+        if flujo is not None:
+            multas.al_multas_guardadas(flujo, ahora, str(fila.id))
+    logger.info("Despachado %s de %s en %s (destino %s).", tipo, fila.clave, fila.topic, mensaje["destino"])
     return True
 
 
@@ -251,3 +321,35 @@ async def despachar_periodicamente(settings: Settings, kafka: Publicador, http: 
         except Exception as exc:  # noqa: BLE001 - la tarea no puede morir por un error puntual
             logger.warning("No se pudo revisar el outbox: %s", exc)
         await asyncio.sleep(settings.outbox_intervalo_segundos)
+
+
+async def purgar_historial(settings: Settings, ahora: Optional[datetime] = None) -> tuple[int, int]:
+    """Borra lo que ya no sirve: filas resueltas del outbox y eventos procesados viejos.
+
+    Las filas del outbox publicadas o abandonadas ya no tienen payload (solo ids y estado). Los eventos
+    procesados solo evitan reprocesar un mensaje que Kafka reentrega: pasada la retención de Kafka no
+    puede volver. Devuelve (filas del outbox, eventos procesados) borrados.
+    """
+    sessionmaker = obtener_sessionmaker()
+    if sessionmaker is None:
+        return 0, 0
+    limite = (ahora or datetime.now(timezone.utc)) - timedelta(days=settings.retencion_historial_dias)
+    async with sessionmaker() as session, session.begin():
+        del_outbox = await session.execute(
+            delete(Outbox).where(or_(Outbox.publicado_en < limite, Outbox.abandonado_en < limite))
+        )
+        de_eventos = await session.execute(delete(EventoProcesado).where(EventoProcesado.procesado_en < limite))
+    return del_outbox.rowcount or 0, de_eventos.rowcount or 0
+
+
+async def purgar_periodicamente(settings: Settings, cada_segundos: float = 3600.0) -> None:
+    while True:
+        try:
+            outbox, eventos = await purgar_historial(settings)
+            if outbox or eventos:
+                logger.info("Purga: %s filas del outbox y %s eventos procesados borrados.", outbox, eventos)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - la tarea no puede morir por un error puntual
+            logger.warning("No se pudo purgar el historial: %s", exc)
+        await asyncio.sleep(cada_segundos)

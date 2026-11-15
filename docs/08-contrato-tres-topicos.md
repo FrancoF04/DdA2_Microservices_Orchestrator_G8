@@ -48,6 +48,7 @@ Todos los mensajes, sin excepción, van con el sobre común. `destino` va **solo
 | `ActualizarCalificacion` | `leads` | Al llegar `LeadCalificado` (automático o manual) | El mismo payload de `LeadCalificado` (§4) |
 | `GenerarResumen` | `ia-resumen` | Al llegar el primer `LeadCalificado` automático (una corrección manual **no** regenera el resumen) | El que hoy lleva `resumen-solicitado`: `leadId`, `clienteId`, `vehiculoId`, `anticipo`, `solicitaFinanciacion`, `permuta{tienePermuta, descripcion, valorDeclarado}`, `ubicacion{provincia, localidad}`. El orquestador lo arma con `GET /leads/{id}` |
 | `GuardarResumen` | `leads` | Al llegar `ResumenGenerado` | `leadId`, `resumen` |
+| `ConsultarMultas` | `multas` | Al abrir una consulta (pedido manual o barrido; §7) y al reintentar un error reintentable del scraper | `vehiculoId`, `patente`. El orquestador la consulta a vehiculos al publicar. La clave del mensaje es el `vehiculoId` |
 
 Qué hace cada servicio al recibirlo es lo mismo que hace hoy con el tópico viejo equivalente:
 
@@ -66,6 +67,8 @@ Qué hace cada servicio al recibirlo es lo mismo que hace hoy con el tópico vie
 | `PreformularioCompletado` | leads | `leadId`, `clienteId`, `vehiculoId`, `montoAnticipo`, `montoPermuta`, `permutaNoComputable`, `solicitaFinanciacion`, `ubicacion` (igual que hoy) |
 | `LeadCalificado` | calificacion | `leadId`, `clienteId`, `puntos`, `nivel`, `origen` (`AUTOMATICA` / `MANUAL`), `fecha` (ISO texto), `observacion`, `motivos[]` (igual que hoy, **ahora con sobre**) |
 | `ResumenGenerado` | ia-resumen | `leadId`, `resumen` (igual que hoy) |
+| `MultasConsultadas` | multas | `vehiculoId`, `dominio`, `infracciones[]` (`numeroActa`, `dominio`, `importe`, `importeSinDescuento`, `tipoInfraccion`, `lugar`, `juzgado`), `subtotal`, `mensaje` opcional. Una patente sin multas es un resultado válido (`infracciones: []`). Clave del mensaje: `vehiculoId` |
+| `ConsultaMultasFallida` | multas | `vehiculoId`, `motivo` (`SITIO_NO_DISPONIBLE`, `ESTRUCTURA_NO_RECONOCIDA` o `PATENTE_INVALIDA`), `reintentable` (boolean; si falta, se trata como `false`) |
 | `ClienteActualizado`, `ClienteAnonimizado` | clientes | Igual que hoy. El orquestador todavía no los usa: los ignora |
 
 ## 5. Fallas (`crm.dlt`)
@@ -77,3 +80,25 @@ Qué hace cada servicio al recibirlo es lo mismo que hace hoy con el tópico vie
 
 - El outbox guarda el comando hasta publicarlo. Los comandos que **reenvían** datos de un evento (`CalificarLead`, `RegistrarCalificacion`, `ActualizarCalificacion`, `GuardarResumen`) llevan su payload en el outbox **solo mientras están pendientes**: al publicarse (o abandonarse) el payload se borra y queda solo el `leadId`. `GenerarResumen` no guarda payload: lo arma al publicar.
 - Las DLT y los eventos no se guardan: solo el estado del flujo y la idempotencia (`evento_procesado`, por `eventId`).
+- **Purga:** cada hora se borran las filas del outbox ya publicadas o abandonadas (sin payload, solo ids y estado) y los eventos procesados con más de `RETENCION_HISTORIAL_DIAS` (30). Ese plazo tiene que superar la retención de Kafka, que es lo que permite que un mensaje vuelva.
+
+## 7. Flujo de multas (`CONSULTA_MULTAS_VEHICULO`)
+
+Las multas son de las unidades en stock y no forman parte del flujo del lead. Hay un flujo por vehículo (clave de negocio: `vehiculoId`) que se reabre en cada consulta; los pasos anteriores quedan como historial.
+
+```
+orquestador ──ConsultarMultas──► crm.comandos ──► multas (scraper)
+multas ──MultasConsultadas / ConsultaMultasFallida──► crm.eventos ──► orquestador
+orquestador ──PUT /vehiculos/{id}/multas (REST, desde el outbox)──► vehiculos
+```
+
+Estados: `CONSULTANDO_MULTAS` → `ACTUALIZANDO_VEHICULO` → `COMPLETADO`, o `FALLIDO` / `EXPIRADO`.
+
+- **Quién abre una consulta:** `POST /api/orquestador/multas/{vehiculoId}` (202; 409 `CONSULTA_EN_CURSO` si ya hay una esperando) y el barrido periódico (`MULTAS_BARRIDO_HABILITADO`, apagado por defecto: pide a vehiculos `GET /vehiculos?disponible=true` y abre una consulta por unidad, hasta `MULTAS_BARRIDO_MAXIMO`). Con `MULTAS_AL_ALTA=true`, el alta de una unidad (`POST /api/vehiculos` que responde 201 con `Location`) abre su consulta en segundo plano, sin afectar la respuesta al cliente; si no, la toma el próximo barrido.
+- **`ConsultaMultasFallida` reintentable:** el orquestador vuelve a pedir `ConsultarMultas` con espera `MULTAS_ESPERA_BASE_SEGUNDOS * 2^(reintento-1)` hasta `MULTAS_MAX_INTENTOS` consultas; después el flujo queda `FALLIDO`. Si no es reintentable (`ESTRUCTURA_NO_RECONOCIDA`: el sitio cambió) queda `FALLIDO` de una vez y hay que alertar.
+- **`ConsultarMultas` en `crm.dlt`:** el flujo queda `FALLIDO`.
+- **Sin respuesta** en `FLUJO_TIMEOUT_MULTAS_SEGUNDOS`: `EXPIRADO`; si la respuesta llega tarde, el flujo se recupera.
+- **Entrega a vehiculos:** `PUT /vehiculos/{id}/multas` con el cuerpo de `MultasConsultadas` sin el `vehiculoId` y los headers `X-Api-Key` (`VEHICULOS_API_KEY`), `X-Correlation-Id` y `X-Origen-Servicio`. 2xx = entregado; 400/401/403/404/409/422 = rechazo, el flujo queda `FALLIDO` sin reintentar; cualquier otra respuesta o un corte se reintenta como cualquier comando del outbox. **vehiculos decide** qué hace con las multas.
+- **Sin patente:** si `GET /vehiculos/{id}` no devuelve `patente` (o la unidad no existe), el flujo queda `FALLIDO` en el acto, sin reintentos.
+- **Datos personales:** el resultado del scraper (actas, importes, lugares) no se guarda en el orquestador: viaja en el outbox solo hasta entregarse y en el log queda solo la cantidad de actas. El comando `ConsultarMultas` tampoco guarda la patente: se consulta a vehiculos al publicar.
+- **Lo que le toca a cada servicio:** el scraper escucha `ConsultarMultas` (`destino: multas`), responde con `MultasConsultadas` o `ConsultaMultasFallida` y serializa las consultas (una a la vez); vehiculos agrega `patente` (migración de Flyway) y `PUT /vehiculos/{id}/multas`.

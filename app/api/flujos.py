@@ -14,8 +14,11 @@ from sqlalchemy.orm import selectinload
 from app.db.models import Flujo
 from app.db.session import obtener_sessionmaker
 from app.errores import ErrorOrquestador
+from app.middleware.correlation_id import correlation_id_actual
 from app.flujos import registro_lead as rl
 from app.flujos import comandos as cmd
+from app.flujos import multas
+from app.flujos.consulta_multas import abrir_consulta
 from app.flujos.despachador import encolar
 from app.seguridad.dependencias import requiere_operador
 
@@ -29,6 +32,7 @@ class PasoResponse(BaseModel):
     servicio: str
     canal: str
     estado: str
+    intento: int
     iniciadoEn: datetime
     respondidoEn: Optional[datetime]
     latenciaMs: Optional[int]
@@ -69,6 +73,7 @@ def _a_respuesta(f: Flujo) -> FlujoResponse:
                 servicio=p.servicio,
                 canal=p.canal,
                 estado=p.estado,
+                intento=p.intento or 1,
                 iniciadoEn=p.iniciado_en,
                 respondidoEn=p.respondido_en,
                 latenciaMs=p.latencia_ms,
@@ -148,5 +153,35 @@ async def reintentar_flujo(flujo_id: uuid.UUID, request: Request) -> FlujoRespon
         await encolar(session, flujo, cmd.generar_resumen(settings))
         await session.flush()
         # `actualizado_en` lo recalcula la base al actualizar: se vuelve a leer antes de armar la respuesta.
+        await session.refresh(flujo, attribute_names=["actualizado_en"])
+        return _a_respuesta(flujo)
+
+
+router_multas = APIRouter(
+    prefix="/api/orquestador/multas", tags=["Orquestador"], dependencies=[Depends(requiere_operador)]
+)
+
+
+@router_multas.post(
+    "/{vehiculo_id}",
+    response_model=FlujoResponse,
+    status_code=202,
+    summary="Consultar las multas de una unidad",
+    description=(
+        "Abre el flujo `CONSULTA_MULTAS_VEHICULO` de la unidad y encola el comando `ConsultarMultas` para el "
+        "scraper. El resultado se entrega a vehiculos por `PUT /vehiculos/{id}/multas`; el orquestador no lo guarda. "
+        "Responde 409 si ya hay una consulta de esa unidad esperando respuesta."
+    ),
+)
+async def consultar_multas(vehiculo_id: uuid.UUID, request: Request) -> FlujoResponse:
+    settings = request.app.state.settings
+    async with _sessionmaker()() as session, session.begin():
+        try:
+            flujo = await abrir_consulta(session, settings, str(vehiculo_id), correlation_id_actual())
+        except multas.ConsultaEnCurso:
+            raise ErrorOrquestador(
+                409, "CONSULTA_EN_CURSO", "Ya hay una consulta de multas en curso para esa unidad."
+            ) from None
+        await session.flush()
         await session.refresh(flujo, attribute_names=["actualizado_en"])
         return _a_respuesta(flujo)
