@@ -6,10 +6,15 @@ Mismo enfoque que leads: aiokafka no acepta `ssl_cafile`, hay que armar un
 
 from __future__ import annotations
 
+import logging
+import os
 import ssl
 from typing import Any
 
 from app.config import Settings
+
+logger = logging.getLogger(__name__)
+
 
 def topicos_propios(settings: Settings) -> list[str]:
     """Los tres tópicos del ecosistema, que el orquestador crea si no existen (Aiven no los autocrea)."""
@@ -30,4 +35,17 @@ def argumentos_seguridad(settings: Settings) -> dict[str, Any]:
         args["ssl_context"] = ssl.create_default_context(cafile=settings.kafka_ssl_cafile)
     elif "SSL" in settings.kafka_security_protocol.upper():
         args["ssl_context"] = ssl.create_default_context()
+
+    # -- diagnóstico temporal: quitar después de resolver --
+    logger.info(
+        "[DIAG] Kafka settings: CWD=%s ca.pem_exists=%s username=%r password_len=%d security=%r mechanism=%r",
+        os.getcwd(),
+        os.path.exists(settings.kafka_ssl_cafile or ""),
+        settings.kafka_sasl_username,
+        len(settings.kafka_sasl_password or ""),
+        settings.kafka_security_protocol,
+        settings.kafka_sasl_mechanism,
+    )
+    # -- fin diagnóstico --
+
     return args
