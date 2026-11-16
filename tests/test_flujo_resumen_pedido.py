@@ -168,6 +168,7 @@ LEAD = {
     "vehiculo_id": "33333333-3333-3333-3333-333333333333",
     "anticipo": 1500000.0,
     "solicita_financiacion": True,
+    "patente": "AB123CD",
     "permuta_tiene": True,
     "permuta_descripcion": "Fiat Palio 2012",
     "permuta_valor_declarado": 4000000.0,
@@ -188,6 +189,7 @@ def test_el_payload_respeta_el_contrato_que_publicaba_leads() -> None:
         "vehiculoId": "33333333-3333-3333-3333-333333333333",
         "anticipo": 1500000.0,
         "solicitaFinanciacion": True,
+        "patente": "AB123CD",
         "permuta": {
             "tienePermuta": True,
             "descripcion": "Fiat Palio 2012",
@@ -195,6 +197,14 @@ def test_el_payload_respeta_el_contrato_que_publicaba_leads() -> None:
         },
         "ubicacion": {"provincia": "Córdoba", "localidad": "Río Cuarto"},
     }
+
+
+def test_el_payload_tolera_patente_vacia() -> None:
+    lead = {**LEAD, "patente": None}
+
+    payload = armar_payload_resumen(lead)
+
+    assert payload["patente"] is None
 
 
 def test_el_payload_tolera_permuta_y_localidad_vacias() -> None:
